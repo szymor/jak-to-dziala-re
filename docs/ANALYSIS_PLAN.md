@@ -17,6 +17,8 @@
 | Naming | `SSSSnXk[a]` where SSSS is a 4-letter subject code, n is the index and X is the role: `M` main, `N` note, `J`, `Z` zoom, `X`, `P` related, `R`, `G`. The suffix is `A` for animation and `S` for sound, for example `AIRP0M2A.ANI`. |
 | Not relevant to the port | `WINGDRV/` (old video drivers), most of `DKCODE/*.??_` (redistributable VfW, OLE2 and WinG runtime, compressed), `DKSETUP/` (MS Setup scripts). These are still useful as references: `DKSETUP/SETUP.INF` and `*.INC` show the install layout and INI keys. |
 
+Phase 1 results: [inventory.md](inventory.md).
+
 **Main conclusion:** this is a fixed-function multimedia player driven by data: bitmaps, animations, sounds and a page/hotspot graph. The best port is a **clean reimplementation of the engine in C on SDL3**, built from a precise spec of the data formats and runtime behaviour. Machine-translating the decompiled 16-bit code would be worse. Ghidra pseudocode serves as the reference and fills in details.
 
 ---
