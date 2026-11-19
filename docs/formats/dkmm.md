@@ -122,14 +122,14 @@ events = u16 count, count × { u16 event, u16 nactions, actions }
 | 3, sub 1 | `0 0 0 0 file_ref` | **bitmap**: background picture of the object, an opaque rectangle |
 | 3, sub 2 | hotspot + `0 4` | **hotspot** (≈ 9 500): `shape` 4 = rectangle (5 and 1 also occur); usually cursor `Hand` |
 | 3, sub = name | hotspot + `0 4` | named hotspot (title screen, full-screen click area) |
-| 4 | hotspot + `0 4 n` | A–Z dial region: `n` 0–23 = letter (select; plays the needle animation `azaz0m?a` from the dial table), 24/25 = rotate left/right arrows, 26 = OK (go to the dial table's target for the selected letter). Verified: letter 2 + OK → `AZ020M`. |
+| 4 | hotspot + `0 4 n` | A–Z dial region: `n` 0–23 = letter, 24/25 = left/right arrows (selection −1/+1, wrapping), 26 = OK. Verified in the original: entering the page selects A, not armed; choosing a letter or an arrow arms the dial, which only changes the OK button from red to yellow (the EXE's built-in `AZDial` control draws EXE bitmap 173/172 at page (334, 350); it also tries to show `azaz0m?a.dib`, which isn't on the CD); OK plays the selected letter's `azaz0m?a.ani` from the dial table, then opens the table's target. B → right → right → left → OK opens `AZ020M`. |
 | 5, sub 2 | hotspot | inert region, no events; one at the end of many pages |
-| 7, sub 2 | hotspot + `anim_ref 1 0 0 0 0 0 107` | **animation element**: plays `anim_ref` and fires event 6 when it ends. `shape` 36 = plays when the page opens and a click skips it (title, `QEMG1m0a`, verified); 20 and 4 = plays when clicked (Workshop objects, principles hub, timeline; Workshop verified) |
+| 7, sub 2 | hotspot + `anim_ref 1 0 0 0 0 0 107` | **animation element**: plays `anim_ref` and fires event 6 when it ends. `shape` 36 = plays when the page opens and a click skips it (title, `QEMG1m0a`, verified); 20 and 4 = plays when clicked, then event 6 (Workshop objects, principles hub → principle page, timeline → period page; all verified); 4 is pre-loaded when the page opens |
 | 2 | hotspot + `0 x0 y0 x1 y1 anim_ref cursor_ref 0 1 20 3 3 3 39 7 107` | **animation** element: an ANI file placed at the rectangle. Started by action 2 or by the object's open event. |
 | 6 | hotspot + `anim_ref 1 0 0 0 0 0 107` | **navigation button**: grow animation `nav\navb0mNa` |
 | 10 | fixed 29 words | **scroll bar**: rectangle, 8 bitmaps from the EXE (`@LINEUP`, `@THUMB`, … where `@` means EXE resource), target element id, step (1 px on help pages, 10 in the Index list) |
 | 9 | fixed 15 words | **scrolled bitmap content** (help pages): view rectangle and the tall content bitmap (`Helpamt0`), scrolled by the class-10 bar that targets its id |
-| 15, 16 | hotspot + `out_img in_img …` (8 / 5 words) | **bitmap buttons** using the EXE's `@OKOUT/@OKIN`, `@CANCLOUT/@CANCLIN` |
+| 15, 16 | hotspot + `out_img in_img …` (8 / 5 words) | **bitmap buttons**: drawn from the EXE bitmaps they name (`@OKOUT/@OKIN`, `@CANCLOUT/@CANCLIN`) at the hotspot rectangle, over the pop-up bitmap (verified pixel-exact) |
 | 12 | hotspot + `0 0 0 style` | **text edit field** (Index search box, `IBeam` cursor, text style 0x0BE3) |
 | 13 | hotspot + `rgb rgb u16 pstr u8 pstr style` | **list box** (Index list): white/black colours, data source `SimpleLBData` (= the index table), face `Regular`, text style 0x0BE3 |
 | 14 | fixed 22 words | **list controller**: links the list box, edit field, scroll bar and OK button (Index screen) |
@@ -181,7 +181,7 @@ Checked against the running original with `tools/orig.sh` and pixel matching of 
 | index entry "Akumulator samochodowy - bateria" → page 104 + pop-up 274 | exact |
 | action 1 replaces the pop-up, action 3 opens a pop-up or navigates, event 6 = animation end, links = context navigation | as described above |
 
-Pop-ups therefore need an 8-px title strip in the port, or the bitmap must be drawn at `y + 8`. They also cast a 4-px drop shadow to the right and below: black on every other pixel of a checkerboard (black where x + y is even), with the image beneath showing through the rest. Wine paints the in-between pixels white, which real Windows doesn't (confirmed from memory of the original on Windows); the port follows Windows.
+Pop-ups therefore need an 8-px title strip in the port, or the bitmap must be drawn at `y + 8`. A black line is drawn under the strip, over the bitmap's first row. They also cast a 4-px drop shadow to the right and below: black on every other pixel of a checkerboard (black where x + y is even), with the image beneath showing through the rest. Wine paints the in-between pixels white, which real Windows doesn't (confirmed from memory of the original on Windows); the port follows Windows.
 
 ## Port notes
 

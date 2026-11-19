@@ -2,7 +2,7 @@
 
 A reimplementation of the player for DK's *The Way Things Work* (Polish edition *Jak to działa?*, 1996) in C17 on SDL3. The port reads **your own copy** of the original CD (the ISO image or an extracted copy). No game data is included in this repository.
 
-Status: milestone 3 of [the plan](docs/ANALYSIS_PLAN.md) — the game runs from the title through the Workshop to the articles: nav bar, hotspots, pop-ups, notes, "Patrz też", animations, sounds, Back. Not yet: the A–Z dial, the Index search screen, help scrolling and Options functions (milestones 4–5). The file formats and the original's behaviour are documented in [`docs/`](docs).
+Status: milestone 4 of [the plan](docs/ANALYSIS_PLAN.md) — all sections play: Workshop, articles, principles, timeline, inventors, A–Z dial, glossary, mammoth stories. Not yet: the Index search screen, help scrolling and the Options functions (milestone 5). The file formats and the original's behaviour are documented in [`docs/`](docs).
 
 ## Build
 
@@ -73,6 +73,8 @@ build/twtw-tool res-dump "Jak To Działa.iso" work/res_c
 ```
 
 writes the EXE's 41 UI bitmaps (byte-identical to `tools/ne_resources.py` output) and the hand cursor.
+
+`build/twtw-tool selftest "Jak To Działa.iso"` checks every reference in the page data and opens every page and pop-up through the engine.
 
 `tools/port.sh` drives the game headless (Xvfb, dummy audio) for screen tests: `start [--page N]`, `click X Y`, `shot FILE.png`, `stop`.
 

@@ -5,6 +5,8 @@
  * device has consumed minus one device buffer (latency). Every frame's dirty
  * rectangle is applied in order (they are deltas); frames are never dropped
  * from the picture, only presented late if the machine can't keep up.
+ * Some animations have less sound than pictures (e.g. the nav buttons): once the
+ * sound has drained, the clock continues on wall time.
  */
 #ifndef TWTW_ANI_PLAYER_H
 #define TWTW_ANI_PLAYER_H
@@ -20,6 +22,8 @@ typedef struct AniPlayer {
     SDL_AudioStream *stream;     /* bound to the device; NULL -> wall clock */
     SDL_AudioDeviceID device;
     Uint64 start_ticks_ns;
+    Uint64 drained_ns;           /* when the sound ran out (the clock then continues on wall time) */
+    double drained_at_s;
     double latency_s;
     int ox, oy;                  /* placement origin on the screen */
     int next_frame;              /* next frame index to apply */

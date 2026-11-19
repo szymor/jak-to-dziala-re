@@ -43,12 +43,14 @@ int ani_player_start(AniPlayer *p, uint8_t *file, size_t size, SDL_AudioDeviceID
 
 double ani_player_time(const AniPlayer *p)
 {
-    if (p->stream) {
+    if (p->stream && !p->drained_ns) {
         /* Input bytes not yet pulled by the device are still queued in the stream. */
         int queued = SDL_GetAudioStreamQueued(p->stream);
         double played = (double)((long)p->ani.audio_bytes - (queued > 0 ? queued : 0)) / p->ani.rate - p->latency_s;
         return played > 0 ? played : 0;
     }
+    if (p->drained_ns)
+        return p->drained_at_s + (double)(SDL_GetTicksNS() - p->drained_ns) / 1e9;
     return (double)(SDL_GetTicksNS() - p->start_ticks_ns) / 1e9;
 }
 
@@ -56,6 +58,13 @@ int ani_player_update(AniPlayer *p, Screen *s)
 {
     if (!p->playing)
         return 0;
+    if (p->stream && !p->drained_ns && SDL_GetAudioStreamQueued(p->stream) <= 0) {
+        p->drained_at_s = (double)p->ani.audio_bytes / p->ani.rate;   /* the device buffer (latency) still plays */
+        p->drained_ns = SDL_GetTicksNS();
+        p->drained_at_s -= p->latency_s;
+        if (p->drained_at_s < 0)
+            p->drained_at_s = 0;
+    }
     int due = (int)(ani_player_time(p) * p->ani.fps);     /* frame j is shown at t = j / fps */
     if (due >= p->ani.frames)
         due = p->ani.frames - 1;
@@ -64,9 +73,11 @@ int ani_player_update(AniPlayer *p, Screen *s)
             s->dirty = 1;
         p->next_frame++;
     }
-    int audio_left = p->stream && SDL_GetAudioStreamQueued(p->stream) > 0;
     double end = (double)p->ani.frames / p->ani.fps;
-    if (p->next_frame >= p->ani.frames && !audio_left && ani_player_time(p) >= end)
+    double audio_end = (double)p->ani.audio_bytes / p->ani.rate;
+    if (audio_end > end)
+        end = audio_end;                                   /* play the sound to the end too */
+    if (p->next_frame >= p->ani.frames && ani_player_time(p) >= end - (p->stream ? p->latency_s : 0))
         p->playing = 0;
     return p->playing;
 }

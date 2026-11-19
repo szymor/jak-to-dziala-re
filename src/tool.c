@@ -7,11 +7,14 @@
  *   twtw-tool dkmm-dump DATA           canonical dump of DKCODE/TWTW.PNG (compare: tools/dkmm.py canonical)
  *   twtw-tool ani-hash DATA            FNV-1a hash of every ANI's decoded frames (compare: tools/ani.py hash)
  *   twtw-tool res-dump DATA OUTDIR     EXE bitmaps as OUTDIR/BITMAP_<id>.bmp, hand cursor as OUTDIR/cursor107.rgba
+ *   twtw-tool selftest DATA            engine self-test: all references resolve, every page/pop-up opens
  */
+#include "engine/game.h"
 #include "formats/ani.h"
 #include "formats/dib.h"
 #include "formats/dkmm.h"
 #include "formats/ne_res.h"
+#include "platform/screen.h"
 #include "vfs/vfs.h"
 
 #include <SDL3/SDL.h>
@@ -410,6 +413,20 @@ int main(int argc, char **argv)
         return cmd_check_vfs(argv[2], argv[3]);
     if (argc >= 4 && !strcmp(argv[1], "dump-dibs"))
         return cmd_dump_dibs(argv[2], argv[3]);
+    if (argc >= 3 && !strcmp(argv[1], "selftest")) {
+        Vfs *v = open_or_die(argv[2]);
+        static Screen screen;               /* no texture: composition only */
+        char err[256];
+        Game *g = game_create(v, &screen, 0, err, sizeof err);
+        if (!g) {
+            fprintf(stderr, "error: %s\n", err);
+            return 1;
+        }
+        int bad = game_selftest(g);
+        game_destroy(g);
+        vfs_close(v);
+        return bad ? 1 : 0;
+    }
     if (argc >= 3 && !strcmp(argv[1], "dkmm-dump"))
         return cmd_dkmm_dump(argv[2]);
     if (argc >= 3 && !strcmp(argv[1], "ani-hash"))
@@ -417,6 +434,6 @@ int main(int argc, char **argv)
     if (argc >= 4 && !strcmp(argv[1], "res-dump"))
         return cmd_res_dump(argv[2], argv[3]);
     fprintf(stderr, "usage: twtw-tool ls DATA | check-vfs ISO DIR | dump-dibs DATA OUTDIR | dkmm-dump DATA |\n"
-                    "                 ani-hash DATA | res-dump DATA OUTDIR\n");
+                    "                 ani-hash DATA | res-dump DATA OUTDIR | selftest DATA\n");
     return 2;
 }

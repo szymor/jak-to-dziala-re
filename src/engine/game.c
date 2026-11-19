@@ -4,6 +4,7 @@
 #include "formats/dkmm.h"
 #include "formats/ne_res.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -29,7 +30,7 @@ typedef struct CachedDib {
     int ok;
 } CachedDib;
 
-enum { END_NONE, END_EVENT6, END_NAV };
+enum { END_NONE, END_EVENT6, END_NAV, END_OPEN };
 
 typedef struct Media {
     int kind;                  /* 0 none, 1 ani, 2 wav */
@@ -37,6 +38,7 @@ typedef struct Media {
     SDL_AudioStream *wav;
     int end;                   /* what happens when it finishes */
     int end_obj, end_child, end_nav;
+    uint32_t end_target;       /* END_OPEN: object to open afterwards */
     int skippable;             /* auto-play: a click finishes it (stop + event 6) instead of only stopping */
 } Media;
 
@@ -72,7 +74,19 @@ struct Game {
     int cache_next;
     SDL_Cursor *hand;
     int hover_hand;
+
+    /* A-Z dial (class 4 regions + the page's dial table) */
+    int dial_sel, dial_armed;
+    Dib exe_ok_lit;            /* EXE bitmap 172: yellow "OK" when a letter is selected */
+    int have_ok_lit;
+
+    /* EXE bitmaps named by the data with an '@' prefix (button images), colour-mapped */
+    struct { char name[24]; Dib dib; int ok; } exe_bmp[16];
+    int nexe_bmp;
 };
+
+#define DIAL_OK_X 334          /* where the original draws EXE bitmaps 172/173 on the A-Z page */
+#define DIAL_OK_Y 350
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -183,6 +197,67 @@ static void install_system_colours(Screen *s)
 }
 enum { SYS_NAVY = 4, SYS_SILVER = 7, SYS_GREY = 248, SYS_WHITE = 255, SYS_BLACK = 0 };
 
+/* EXE bitmaps carry their own palette: map each colour to the nearest game palette entry. */
+static void remap_to_screen(const Screen *s, Dib *d)
+{
+    uint8_t lut[256];
+    for (int i = 0; i < 256; i++) {
+        int best = 0, bd = 1 << 30;
+        for (int j = 0; j < 256; j++) {
+            int dr = d->palette[i].r - s->palette[j].r, dg = d->palette[i].g - s->palette[j].g,
+                db = d->palette[i].b - s->palette[j].b, dd = dr * dr + dg * dg + db * db;
+            if (dd < bd)
+                bd = dd, best = j;
+        }
+        lut[i] = (uint8_t)best;
+    }
+    for (size_t i = 0, n = (size_t)d->width * d->height; i < n; i++)
+        d->pixels[i] = lut[d->pixels[i]];
+    memcpy(d->palette, s->palette, sizeof d->palette);
+}
+
+/* "@NAME" string ref -> EXE BITMAP resource NAME, mapped to the game palette (cached). */
+static const Dib *exe_bitmap(Game *g, uint16_t ref)
+{
+    size_t n;
+    const char *s = dkmm_string(&g->dk, ref, &n);
+    if (!s || n < 2 || s[0] != '@' || !g->have_ne)
+        return NULL;
+    char name[24];
+    SDL_snprintf(name, sizeof name, "%.*s", (int)(n - 1), s + 1);
+    for (int i = 0; i < g->nexe_bmp; i++)
+        if (!SDL_strcasecmp(g->exe_bmp[i].name, name))
+            return g->exe_bmp[i].ok ? &g->exe_bmp[i].dib : NULL;
+    if (g->nexe_bmp == 16)
+        return NULL;
+    int i = g->nexe_bmp++;
+    SDL_strlcpy(g->exe_bmp[i].name, name, sizeof g->exe_bmp[i].name);
+    size_t bl;
+    uint8_t *bmp = ne_bitmap_bmp(&g->ne, -1, name, &bl);
+    char err[64];
+    g->exe_bmp[i].ok = bmp && dib_decode(bmp, bl, &g->exe_bmp[i].dib, err, sizeof err) == 0;
+    free(bmp);
+    if (g->exe_bmp[i].ok)
+        remap_to_screen(g->screen, &g->exe_bmp[i].dib);
+    else
+        SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "EXE bitmap %s not found", name);
+    return g->exe_bmp[i].ok ? &g->exe_bmp[i].dib : NULL;
+}
+
+/* Bitmap buttons (classes 15, 16) are drawn from their EXE images at the hotspot rectangle. */
+static void draw_buttons(Game *g, const DkObject *o, int ox, int oy)
+{
+    Rect all = {0, 0, SCREEN_W, SCREEN_H};
+    for (int k = 0; k < o->nchild; k++) {
+        const DkChild *c = &o->children[k];
+        if (c->cls != 15 && c->cls != 16)
+            continue;
+        const Dib *d = exe_bitmap(g, c->images[0]);
+        if (d)
+            blit_clipped(g->screen, d, ox + c->rect[0], oy + c->rect[1], all);
+    }
+}
+
 static Rect popup_rect(Game *g, const DkObject *o)
 {
     int16_t x = (int16_t)o->x, y = (int16_t)o->y;    /* Help has x = -40 */
@@ -227,6 +302,8 @@ static void compose(Game *g)
             if (d)
                 blit_clipped(s, d, g->frame_rect[k].x, g->frame_rect[k].y, g->frame_rect[k]);
         }
+    if (page && page->ntable && g->dial_armed && g->have_ok_lit)
+        blit_clipped(s, &g->exe_ok_lit, g->page_rect.x + DIAL_OK_X, g->page_rect.y + DIAL_OK_Y, g->page_rect);
     for (int p = 0; p < g->npopups; p++) {
         DkObject *o = object(g, g->popups[p]);
         if (!o)
@@ -245,6 +322,8 @@ static void compose(Game *g)
         const Dib *d = object_bitmap(g, o);
         if (d)
             blit_clipped(s, d, r.x, r.y + STRIP_H, all);
+        fill(s, r.x, r.y + STRIP_H, r.w, 1, SYS_BLACK);       /* line under the strip (over the first row) */
+        draw_buttons(g, o, r.x, r.y + STRIP_H);
     }
     g->dirty = 0;
 }
@@ -332,6 +411,8 @@ static void enter_page(Game *g, int target)
     SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "page %d", target);
     g->page = target;
     g->npopups = 0;
+    g->dial_sel = 0;              /* verified: the dial starts at A, not armed */
+    g->dial_armed = 0;
     set_page_layout(g, o);
     g->dirty = 1;
     compose(g);
@@ -494,6 +575,8 @@ static void media_finished(Game *g)
     if (end == END_NAV) {
         g->dirty = 1;
         nav_function(g, fn);
+    } else if (end == END_OPEN) {
+        open_object(g, g->media.end_target ? g->media.end_target : 0, 0);
     } else if (end == END_EVENT6) {
         DkObject *o = object(g, obj);
         if (o && child < o->nchild)
@@ -525,10 +608,46 @@ static int hotspot_at(Game *g, int obj, int x, int y)
     return -1;
 }
 
+/* A-Z dial region: 0-23 select a letter, 24/25 step left/right, 26 OK (verified in the original:
+ * selecting lights the OK button; OK plays the letter's needle animation, then opens its page). */
+static void click_dial(Game *g, int obj, const DkObject *o, int value)
+{
+    int n = o->ntable;
+    if (n <= 0)
+        return;
+    if (value < n) {
+        g->dial_sel = value;
+        g->dial_armed = 1;
+    } else if (value == n) {
+        g->dial_sel = (g->dial_sel + n - 1) % n;
+        g->dial_armed = 1;
+    } else if (value == n + 1) {
+        g->dial_sel = (g->dial_sel + 1) % n;
+        g->dial_armed = 1;
+    } else {
+        uint32_t target = o->table_targets[g->dial_sel];
+        char path[256];
+        resolve(g, o->dir, o->table_anims[g->dial_sel], ".ANI", path, sizeof path);
+        if (media_ani(g, path, g->page_rect.x, g->page_rect.y) == 0) {
+            g->media.end = END_OPEN;
+            g->media.end_target = target;
+        } else {
+            open_object(g, target, 0);
+        }
+        return;
+    }
+    g->dirty = 1;
+    (void)obj;
+}
+
 static void click_child(Game *g, int obj, int k)
 {
     DkObject *o = object(g, obj);
     const DkChild *c = &o->children[k];
+    if (c->cls == 4) {
+        click_dial(g, obj, o, c->ntail >= 3 ? c->tail[2] : 0);
+        return;
+    }
     if (c->cls == 7 || (c->cls == 2 && !c->nevents)) {     /* animated hotspot: play, event 6 at the end */
         play_anim_child(g, obj, k);
         return;
@@ -732,6 +851,15 @@ Game *game_create(Vfs *vfs, Screen *screen, SDL_AudioDeviceID audio, char *err, 
     g->exe = vfs_read(vfs, "DKCODE/TWTW.EXE", &exelen);
     char nerr[64];
     if (g->exe && ne_open(&g->ne, g->exe, exelen, nerr, sizeof nerr) == 0) {
+        g->have_ne = 1;
+        size_t bl;
+        uint8_t *bmp = ne_bitmap_bmp(&g->ne, 172, NULL, &bl);
+        char derr[64];
+        if (bmp && dib_decode(bmp, bl, &g->exe_ok_lit, derr, sizeof derr) == 0) {
+            remap_to_screen(screen, &g->exe_ok_lit);
+            g->have_ok_lit = 1;
+        }
+        free(bmp);
         NeCursor c;
         if (ne_cursor(&g->ne, 107, &c) == 0) {
             SDL_Surface *s = SDL_CreateSurfaceFrom(c.width, c.height, SDL_PIXELFORMAT_ARGB8888, c.rgba, c.width * 4);
@@ -743,6 +871,108 @@ Game *game_create(Vfs *vfs, Screen *screen, SDL_AudioDeviceID audio, char *err, 
         }
     }
     return g;
+}
+
+/* ------------------------------------------------------------------ self-test */
+
+static int check_file(Game *g, int obj, const char *what, const char *path)
+{
+    if (path[0] && vfs_exists(g->vfs, path))
+        return 0;
+    printf("object %d: %s missing: %s\n", obj, what, path[0] ? path : "(no name)");
+    return 1;
+}
+
+static int check_target(Game *g, int obj, const char *what, uint32_t t)
+{
+    if (object(g, (int)t))
+        return 0;
+    printf("object %d: %s target %u invalid\n", obj, what, t);
+    return 1;
+}
+
+static int check_events(Game *g, int obj, const DkObject *o, const DkEvent *ev, int n)
+{
+    int bad = 0;
+    char path[256];
+    for (int i = 0; i < n; i++)
+        for (int k = 0; k < ev[i].nactions; k++) {
+            const DkAction *a = &ev[i].actions[k];
+            switch (a->type) {
+            case 1: case 3: case 13: bad += check_target(g, obj, "action", arg32(a)); break;
+            case 4: resolve(g, o->dir, a->args[0], ".WAV", path, sizeof path); bad += check_file(g, obj, "sound", path); break;
+            case 7: resolve(g, o->dir, a->args[0], ".ANI", path, sizeof path); bad += check_file(g, obj, "animation", path); break;
+            case 2: {
+                int found = 0;
+                for (int c = 0; c < o->nchild; c++)
+                    found |= o->children[c].cls == 2 && o->children[c].id == a->args[0];
+                if (!found) {
+                    printf("object %d: action 2 element %u not found\n", obj, a->args[0]);
+                    bad++;
+                }
+                break;
+            }
+            default: break;
+            }
+        }
+    return bad;
+}
+
+int game_selftest(Game *g)
+{
+    int bad = 0, pages = 0, popups = 0;
+    char path[256];
+    for (int i = 0; i < g->dk.nobjects; i++) {
+        DkObject *o = object(g, i);
+        if (!o) {
+            printf("object %d: does not parse\n", i);
+            bad++;
+            continue;
+        }
+        for (int k = 0; k < o->nchild; k++) {
+            const DkChild *c = &o->children[k];
+            if (c->kind == DK_CHILD_BITMAP || c->kind == DK_CHILD_CONTENT) {
+                resolve(g, o->dir, c->file, ".DIB", path, sizeof path);
+                bad += check_file(g, i, "bitmap", path);
+                if (vfs_exists(g->vfs, path) && !bitmap(g, path))
+                    printf("object %d: bitmap does not decode: %s\n", i, path), bad++;
+            }
+            if ((c->cls == 2 || c->cls == 6 || c->cls == 7) && c->file) {
+                resolve(g, c->cls == 6 ? 0 : o->dir, c->file, ".ANI", path, sizeof path);
+                bad += check_file(g, i, "animation", path);
+            }
+            if (c->cursor && !dkmm_string(&g->dk, c->cursor, NULL))
+                printf("object %d: bad cursor ref %u\n", i, c->cursor), bad++;
+            bad += check_events(g, i, o, c->events, c->nevents);
+        }
+        bad += check_events(g, i, o, o->events, o->nevents);
+        for (int k = 0; k < o->nlinks && o->type != 0; k++)
+            for (int m = 0; m < 4; m++)
+                bad += check_target(g, i, "link", o->links[k][m]);
+        for (int k = 0; k < o->ntable; k++) {
+            bad += check_target(g, i, "dial", o->table_targets[k]);
+            resolve(g, o->dir, o->table_anims[k], ".ANI", path, sizeof path);
+            bad += check_file(g, i, "dial animation", path);
+        }
+    }
+    /* open every page and pop-up through the engine (exercises layout, composition, events) */
+    for (int i = 0; i < g->dk.nobjects; i++) {
+        DkObject *o = object(g, i);
+        if (!o || o->type == 0)
+            continue;
+        if (o->type == 2) {
+            enter_page(g, i);
+            pages++;
+        } else {
+            open_object(g, (uint32_t)i, 0);
+            popups++;
+        }
+        compose(g);
+        media_stop(g);
+        g->nhistory = 0;
+    }
+    printf("self-test: %d objects, %d pages and %d pop-ups opened, %d problems\n", g->dk.nobjects, pages, popups, bad);
+    return bad;
 }
 
 void game_start(Game *g, int obj)
@@ -767,6 +997,11 @@ void game_destroy(Game *g)
             dib_free(&g->cache[i].dib);
     if (g->hand)
         SDL_DestroyCursor(g->hand);
+    if (g->have_ok_lit)
+        dib_free(&g->exe_ok_lit);
+    for (int i = 0; i < g->nexe_bmp; i++)
+        if (g->exe_bmp[i].ok)
+            dib_free(&g->exe_bmp[i].dib);
     dkmm_close(&g->dk);
     free(g->png);
     free(g->exe);

@@ -1,6 +1,6 @@
 # "Jak to działa" (DK *The Way Things Work*, PL, 1996): plan for a C/SDL3 port
 
-Status (2026-11-19): phases 1–4 are done; port milestones 1–3 are done (see §6). Revised after the analysis; the original first-look version is in git history.
+Status (2026-11-19): phases 1–4 are done; port milestones 1–4 are done (see §6). Revised after the analysis; the original first-look version is in git history.
 
 ## 0. What we know
 
@@ -70,7 +70,7 @@ Decisions, updated with what the analysis showed:
 1. ✅ **Skeleton:** CMake, SDL3 window, VFS (directory + ISO 9660), DIB decoder. Shows any bitmap by name.
 2. ✅ **Formats in C:** `ani.c` (with an audio-clock player), `dkmm.c` (a port of `tools/dkmm.py`), `ne_res.c`. Test: a C dump of TWTW.PNG matches the Python dump byte for byte, and all 495 ANIs decode to the same frames as `tools/ani.py`.
 3. ✅ **Engine MVP:** title → Workshop → nav bar → one article with hotspots, pop-ups, animations, sounds, "Patrz też", Back. Verified headless against screenshots of the original: Workshop and the battery page + zoom pop-up are pixel-identical (apart from the deliberately Windows-3.1-styled pop-up title strip); the title sequence, context nav (Historia → `TT050m`), Back, outside-click and media-stop rules behave as recorded. Found on the way: pop-ups cast a 4-px checkerboard shadow (black on every other pixel, the image shows through). Class-7 "shape": 36 = autoplay on open, skipped by a click; 20 and 4 = play when clicked. Corrected after user testing: there is no idle animation loop, and a click during an auto-play animation skips it (both verified with traces).
-4. **All sections:** principles, inventors, timeline, A–Z dial, glossary links, mammoth stories, context nav buttons.
+4. ✅ **All sections:** principles, inventors, timeline, A–Z dial, glossary links, mammoth stories, context nav buttons. Done: A–Z dial (rules verified in the original), principles hub, timeline, inventors, glossary links, mammoth stories and context nav all run from the data. `twtw-tool selftest` resolves every reference of all 1668 objects and opens all 399 pages and 1265 pop-ups. Pixel checks against the original: timeline, principles and inventors hubs identical; A–Z dial idle/armed identical; Options and mammoth-stories pop-ups identical apart from Wine's window frame. Fixed on the way: animations with less sound than pictures never finished (nav buttons); EXE button bitmaps and the line under the pop-up strip.
 5. **Widgets:** help scroll views (class 9 + 10), Index screen (list box with Polish-collation lower-bound search, edit field, scroll bar, OK/Anuluj, Enter), Options (copy, save PNG).
 6. **Polish:** cursors, keyboard (Esc closes the pop-up, Backspace = Back), window scaling and fullscreen, settings, packages.
 7. **Regression harness:** reuse `tools/orig.sh` plus the pixel matcher to capture reference frames from the original, and compare port frames against them for a fixed list of screens.

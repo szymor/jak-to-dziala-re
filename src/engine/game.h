@@ -27,6 +27,9 @@ void game_update(Game *g);
 /* Cursor that should be shown now (NULL = system default). */
 SDL_Cursor *game_cursor(Game *g);
 
+/* Checks every object's references and opens every page/pop-up; prints problems, returns their count. */
+int game_selftest(Game *g);
+
 /* Current page object index (for tests/titles). */
 int game_page(const Game *g);
 int game_popup(const Game *g);   /* top pop-up or -1 */
