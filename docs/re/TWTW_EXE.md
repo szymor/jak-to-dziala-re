@@ -46,8 +46,8 @@ Without these settings the decompiler drops every call argument in this 16-bit c
 ## ANI playback findings
 
 - The RLE decoder confirms the format in docs/formats/ani.md. A run writes `n` bytes as one byte (if `n` is odd) plus `n/2` 16-bit pairs. The end check (`dst == end`) only happens after each command, which explains frames that decode one byte past their size.
-- **Transparency exists in the engine.** `RleDecodeKeyed` leaves pixels equal to a key colour index unwritten. When the frame blitter's transparent flag is set, it first copies the background into the frame bitmap, then decodes keyed. The key is read from the display object (field +0x70). Which elements set the flag, and which index is the key, is still open: indices 0 and 255 are both used as ordinary black and white in the art.
-- Measured in the running original (25 fps screen capture): animations advance every 0.2 s, i.e. 5 fps as the header says.
+- **Transparency exists in the engine but is not visibly used by this title.** `RleDecodeKeyed` leaves pixels equal to a key colour index unwritten. When the frame blitter's transparent flag is set, it first copies the background into the frame bitmap, then decodes keyed. The key is read from the display object (field +0x70). Checked against 25 fps screen recordings of the original: an action-7 animation (`BATT0m0a` on the battery page) and the Workshop's auto-playing class-7 animations (`WWWW0MEA/FA/GA/JA`) match an **opaque** decode of their frames over the page bitmap pixel for pixel. The only differences were the mouse pointer. **The port can draw all ANI frames opaque.**
+- Timing measured in the running original: content advances at the header's 5 fps. Under Wine the original showed only every second frame (a new picture every 0.4 s, two frames on), which is consistent with frames being skipped to stay in sync with the sound.
 
 ## Transitions
 
@@ -64,7 +64,9 @@ Without these settings the decompiler drops every call argument in this 16-bit c
 | 15, 16 | fade out to white (15) or black (16) with `AnimatePalette` on palette entries 10–236, step 5, then fade back in |
 | 19 | split from the centre outward, 10-px steps |
 
-The type is a **property of the panel** (panel object +0x60, with a "pending" flag at +0x78). It probably comes from the template section's per-template fields (values 4, 8 and 9 occur there). In the running original, a page change from the nav bar happened within one captured frame, i.e. without a visible transition. Which transitions are used where is still open.
+The type is a **property of the panel** (panel object +0x60, with a "pending" flag at +0x78). It probably comes from the template section's per-template fields (values 4, 8 and 9 occur there). `PanelRepaint` also skips transitions when a global check at 1050:EFAC is set.
+
+**No transitions occur in practice.** In 25 fps recordings of the original (no `twtw.ini`, i.e. default settings), every change happened from one captured frame to the next: the title → Workshop switch, nav-bar page changes, the Index → page + zoom pop-up (page in one frame, pop-up in the next), and closing a pop-up. **The port can switch instantly.** Implementing the effects is optional polish; the table above documents them.
 
 ## Resource types
 
@@ -72,8 +74,15 @@ The data segment at 10B8:014F holds the engine's resource file-extension table, 
 
 ## Open items for the next Phase 3 pass
 
-1. Action semantics, the A–Z dial, Back and cursors are now settled from the data plus runtime checks (see docs/formats/dkmm.md). The dispatcher code itself still isn't located: the deserialisers and actions are reached through C++ virtual calls.
-2. The ANI tick source (timer or `waveOut` callback). The port drives frames from the audio position instead.
-3. The transparent-flag source and key index for animations.
-4. The template field → transition type mapping.
-5. Options: copy window (clipboard), print (`PrintDlg`, `PRINTABORTDLG`).
+Phase 3 is closed for the port's needs. Not traced (not needed): the action dispatcher code (reached through C++ virtual calls), the ANI tick source, the transparent-flag and key source, and the template field → transition mapping.
+
+## Options screen functions
+
+- **Kopiuj aktywne okno** (copy active window), 1028:76D2: captures the current view and puts it on the clipboard as a bitmap and a palette. On Windows 3.x it also adds a DIB (format 8). The port can use `SDL_SetClipboardData` with a BMP/PNG of the 640×480 frame.
+- **Drukuj aktywne okno / Ustawienia wydruku** (print / print setup), 1028:800E and 1028:8A4A: the standard `PrintDlg`, then render to the printer with `PRINTABORTPROC` / `PRINTABORTDLG` (the "Drukowanie… n%" dialog). A modern port can replace this with "save image" or the platform's print dialog; it isn't a core feature.
+
+## Behaviour notes from the runtime sessions
+
+- A click on a page hotspot outside an open pop-up first closes the pop-up (in one frame), then runs the hotspot's action.
+- The title screen ignores clicks for its first few seconds (probably until the intro animation ends); after that, a click goes to the Workshop.
+- The Workshop's class-7 animations loop on their own while the hub is idle.
