@@ -477,10 +477,13 @@ static void draw_index(Game *g, const DkObject *o, int ox, int oy)
         int ty = oy + e[1] + (e[3] - e[1] - font_line(g->font)) / 2;
         size_t n = cp1250_to_utf8(g->idx_text, strlen(g->idx_text), utf8, sizeof utf8);
         int w = font_width(g->font, utf8, n);
+        /* text from the field's left edge; the caret is 2 px wide (CreateCaret, FUN_1028_5b8a),
+         * at the end of the text (matches the original's screenshots) */
+        int tx = ox + e[0];
         if (g->idx_selall && n)
-            fill(s, ox + e[0] + 3, ty, w, font_line(g->font), g->col_sel_bg);
-        font_draw(g->font, s, utf8, n, ox + e[0] + 3, ty, c, g->idx_selall ? g->col_sel_fg : g->col_fg);
-        fill(s, ox + e[0] + 3 + w, ty, 1, font_line(g->font), g->col_fg);            /* caret */
+            fill(s, tx, ty, w, font_line(g->font), g->col_sel_bg);
+        font_draw(g->font, s, utf8, n, tx, ty, c, g->idx_selall ? g->col_sel_fg : g->col_fg);
+        fill(s, tx + w, ty, 2, font_line(g->font), g->col_fg);
     }
     if (g->idx_list >= 0) {
         const uint16_t *l = o->children[g->idx_list].rect;
@@ -490,13 +493,13 @@ static void draw_index(Game *g, const DkObject *o, int ox, int oy)
         int rows = idx_rows(g, o), n = idx_count(g);
         for (int r = 0; r < rows && g->idx_top + r < n; r++) {
             int i = g->idx_top + r, y = oy + l[1] + r * IDX_ROW_H;
-            Clip c = {ox + l[0] + 1, y, right - (ox + l[0] + 1), IDX_ROW_H};
+            Clip c = {ox + l[0], y, right - (ox + l[0]), IDX_ROW_H};   /* band and text from the left edge */
             if (i == g->idx_sel)
                 fill(s, c.x, y, c.w, IDX_ROW_H - 1, g->col_sel_bg);
             size_t len;
             const char *t = idx_entry(g, i, &len);
             size_t u = cp1250_to_utf8(t, len, utf8, sizeof utf8);
-            font_draw(g->font, s, utf8, u, ox + l[0] + 3, y - 1, c, i == g->idx_sel ? g->col_sel_fg : g->col_fg);
+            font_draw(g->font, s, utf8, u, ox + l[0], y, c, i == g->idx_sel ? g->col_sel_fg : g->col_fg);
         }
     }
 }
