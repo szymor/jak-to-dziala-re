@@ -76,6 +76,33 @@ The data segment at 10B8:014F holds the engine's resource file-extension table, 
 
 Phase 3 is closed for the port's needs. Not traced (not needed): the action dispatcher code (reached through C++ virtual calls), the ANI tick source, the transparent-flag and key source, and the template field → transition mapping.
 
+## Object classes and the widget code
+
+The child factory FUN_1048_3dc2 maps class numbers to C++ constructors (the numbers are compared with globals filled from the enum table at 1048:5770, see `docs/formats/dkmm.md`). Constructors and vtables (`tools/ne_vtables.py` lists the vtables after applying the segment fixups):
+
+| class | name | constructor | vtable |
+|---|---|---|---|
+| 2 | AnimationControl | 1048:d582 | 1048:dabc |
+| 3 | Hotspot | 1010:69f8 | 1058:1570 |
+| 9 | ScrollBitmap | 1048:4ffc | 1048:5f5e |
+| 10 | ScrollBar | 1048:b434 | 1048:c99a |
+| 12 | EditBox (`DKCEditBox`) | 1050:22c8 | 1050:3ebe |
+| 13 | Collage (list box) | 1050:57be | 1050:69d8 |
+| 14 | GroupColl (list controller) | 1050:7f38 | 1050:97bc (second table) |
+
+**Scroll bar** (vtable 1048:c99a; the scrollable base class shared with the content is in 1010:03ba–0730):
+
+- Load (FUN_1048_b20a): 8 bitmap names, then four step words (+0x14e, +0x150, line +0x152, acceleration +0x154), a flag (+0x156) and the 32-bit page (+0x78). All data has line 1 and no acceleration.
+- Position: a 32-bit value clamped to [min, max] (SetPos, 1048:bec6 and 1010:04de). LineUp/LineDown move by `line`, PageUp/PageDown by `page`. The bar calls the same method on its target (the content or the list), which applies its own ±1 / ±page (1010:065e…06fc).
+- Linking (1010:0560) copies the content's range into the bar. The Index list sets the bar at run time (1050:83c0): max = items − visible rows, page = max(1, trunc(visible rows × 0.9)) (constant 0.9 at DGROUP:0x0adc), so 12 for the 14-row list.
+- Geometry (1048:b9c4, 1048:bec6): span = h − 47 (track between the 16-px arrows, minus the 16-px thumb, plus 1); thumb top = 16 + round(pos · span / range). Content offset = round(pos · (bitmap height − view height) / range). Both use FUN_1010_0732, `(2·pos·span / range + 1) >> 1`.
+- Mouse down (FUN_1048_bfce) hit-tests by y: line up (above the track), page up (above the thumb), thumb (starts a drag), page down, line down. The track is two parts, above and below the thumb, each drawing THUMBTRACK from its own top, so the checkered pattern restarts under the thumb.
+- Auto-repeat (FUN_1048_bb3a, a 100 ms timer through the timer manager FUN_1010_3a8c): the first repeat comes on the 3rd tick (300 ms), then one every tick, and only while the pointer is still over the pressed part.
+- Drag (FUN_1048_bd74): pos = round((y − 16 − 8) · range / span), so the thumb is centred on the pointer; the target follows.
+- Mouse up (FUN_1048_bc88): kills the timer and ends the drag.
+
+Verified against the original's help screenshots: positions 0–3 and a track click from 3 (to 2) are pixel-identical apart from Wine's window frame.
+
 ## Options screen functions
 
 - **Kopiuj aktywne okno** (copy active window), 1028:76D2: captures the current view and puts it on the clipboard as a bitmap and a palette. On Windows 3.x it also adds a DIB (format 8). The port can use `SDL_SetClipboardData` with a BMP/PNG of the 640×480 frame.

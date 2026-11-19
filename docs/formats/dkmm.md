@@ -110,6 +110,8 @@ trailer                     (type 0 has its own, see below)
 
 ### Children
 
+TWTW.EXE names the class numbers (an enum table at 1048:5770): 1 `Bitmap`, 2 `AnimationControl`, 3 `Hotspot`, 4 `AZHotspot`, 5 `WordBox`, 6 `NavHotspot`, 7 `AnimHotspot`, 8 `CancelButton`, 9 `ScrollBitmap`, 10 `ScrollBar` (spelled `ScrollBaa`), 11 `AZAnimHotspot`, 12 `EditBox`, 13 `Collage`, 14 `GroupColl`, 15 `CollButton`, 16 `Button`, 17 `ClipRect`, 18 `SpriteObject`. The same table names the actions (0 `NULL_ACT`, 1 `OPENPAGE`, 2 `SENDMESSAGE`, 3 `CHANGEPAGE`, 4 `PLAYWAVE`, 5 `STOPWAVE`, 6 `SEEKWAVE`, 7 `PLAYPICS`, 8 `PLAYPICSNOLOAD`, 9 `BACKPAGE`, 10 `PLAYNONQPICS`, 11 `STOPPICS`, 12 `TWTWOPTION`, 13 `Closepage`, 14 `SEEKPICS`), the events (1 `on_open`, 2 `on_activateapp`, 3 `on_close`, 4 `on_click`, 5 `on_preopen`, 6 `on_finish`, 7–11 `on_select1..5`), the panels (`Display`, `AZDial`, `NavPanel`), the page kinds (`POPUP_PAGE`, `BASE_PAGE`, `INDEX_PAGE`, `CHILD_PAGE`) and the transitions (`none`, `zoom`, `wipeleft`, `wiperight`).
+
 Every child starts with `u16 class`. Most continue with the common **hotspot body**:
 
 ```
@@ -127,8 +129,8 @@ events = u16 count, count × { u16 event, u16 nactions, actions }
 | 7, sub 2 | hotspot + `anim_ref 1 0 0 0 0 0 107` | **animation element**: plays `anim_ref` and fires event 6 when it ends. `shape` 36 = plays when the page opens and a click skips it (title, `QEMG1m0a`, verified); 20 and 4 = plays when clicked, then event 6 (Workshop objects, principles hub → principle page, timeline → period page; all verified); 4 is pre-loaded when the page opens |
 | 2 | hotspot + `0 x0 y0 x1 y1 anim_ref cursor_ref 0 1 20 3 3 3 39 7 107` | **animation** element: an ANI file placed at the rectangle. Started by action 2 or by the object's open event. |
 | 6 | hotspot + `anim_ref 1 0 0 0 0 0 107` | **navigation button**: grow animation `nav\navb0mNa` |
-| 10 | fixed 29 words | **scroll bar**: rectangle, 8 bitmaps from the EXE (`@LINEUP`, `@THUMB`, … where `@` means EXE resource), target element id, step (1 px on help pages, 10 in the Index list) |
-| 9 | fixed 15 words | **scrolled bitmap content** (help pages): view rectangle and the tall content bitmap (`Helpamt0`), scrolled by the class-10 bar that targets its id |
+| 10 | fixed 29 words | **scroll bar** (`ScrollBar`): `id, x0 y0 x1 y1, cursor, ?, target_id, u32 min, u32 max, ?, ?, 8 × bitmap ref, 4 × step word, flag, u32 page` (32-bit values big-endian word pairs). Bitmaps from the EXE (`@` = EXE resource): LINEUP, LINEDOWN, THUMB, THUMBTRACK, then the pressed ALT set. Help bars: max 0 (taken from the content), page 1; Index bar: max 1308, page 10 (the list overrides both at run time). See `docs/re/TWTW_EXE.md`. |
+| 9 | fixed 15 words | **scrolled bitmap content** (`ScrollBitmap`, help pages): `id, view x0 y0 x1 y1, …, u32 min, u32 max, …, file_ref`; `max` is the number of scroll positions (3 for `Helpamt0`, up to 107); position `p` shows the bitmap at offset `round(p · (height − view_h) / max)` |
 | 15, 16 | hotspot + `out_img in_img …` (8 / 5 words) | **bitmap buttons**: drawn from the EXE bitmaps they name (`@OKOUT/@OKIN`, `@CANCLOUT/@CANCLIN`) at the hotspot rectangle, over the pop-up bitmap (verified pixel-exact) |
 | 12 | hotspot + `0 0 0 style` | **text edit field** (Index search box, `IBeam` cursor, text style 0x0BE3) |
 | 13 | hotspot + `rgb rgb u16 pstr u8 pstr style` | **list box** (Index list): white/black colours, data source `SimpleLBData` (= the index table), face `Regular`, text style 0x0BE3 |

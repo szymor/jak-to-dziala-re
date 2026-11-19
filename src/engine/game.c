@@ -26,15 +26,21 @@ typedef struct Rect {
     int x, y, w, h;
 } Rect;
 
-/* A scroll bar (class 10) of the top pop-up: over scrolled content (class 9, help pages)
- * or over the Index list. Geometry measured in the original: arrows 16x16 at both ends,
- * the THUMBTRACK bitmap between them, a 16x16 thumb at top+16+round(pos*(h-47)/range). */
+/* A scroll bar (class 10, "ScrollBar" in TWTW.EXE, vtable 1048:c99a) of the top pop-up: over
+ * scrolled content (class 9 "ScrollBitmap", help pages) or over the Index list. From the code:
+ * arrows 16x16 at both ends, the THUMBTRACK bitmap between them, a 16x16 thumb at
+ * top + 16 + round(pos * span / range) with span = h - 47; the content is drawn at
+ * round(pos * maxoff / range). Positions run 0..range; arrows step 1, the track steps 'page'. */
 typedef struct ScrollBar {
     int bar, content;          /* child indices; content -1 = the Index list */
-    int pos, range, maxoff, line;
+    int pos, range, page, maxoff;
 } ScrollBar;
 
-enum { PART_NONE, PART_UP, PART_DOWN, PART_THUMB };
+enum { PART_NONE, PART_UP, PART_DOWN, PART_THUMB, PART_PAGEUP, PART_PAGEDOWN };
+
+/* auto-repeat (FUN_1048_bb3a): a 100 ms timer; the first repeat on the 3rd tick */
+#define SB_TICK_NS 100000000ull
+#define SB_FIRST_REPEAT_NS (3 * SB_TICK_NS)
 
 typedef struct CachedDib {
     char path[96];
@@ -101,7 +107,8 @@ struct Game {
     int widget_obj;            /* pop-up the widget state belongs to (-1 none) */
     ScrollBar sb[4];
     int nsb;
-    int press_sb, press_part, drag_off;
+    int press_sb, press_part;
+    int mouse_x, mouse_y;
     Uint64 press_next_ns;
     Font *font;
     uint8_t col_bg, col_fg, col_sel_bg, col_sel_fg;
@@ -350,8 +357,10 @@ static void sb_update_range(Game *g, const DkObject *o, ScrollBar *b)
 {
     if (b->content >= 0)
         return;
-    int range = idx_count(g) - idx_rows(g, o);
+    int rows = idx_rows(g, o);
+    int range = idx_count(g) - rows;
     b->range = range > 0 ? range : 0;
+    b->page = rows * 9 / 10 > 0 ? rows * 9 / 10 : 1;   /* the list sets page = trunc(rows * 0.9) */
     b->pos = g->idx_top;
 }
 
@@ -395,8 +404,9 @@ static void widgets_setup(Game *g)
             const Dib *d = bitmap(g, path);
             int vh = v->rect[3] - v->rect[1];
             b->maxoff = d && d->height > vh ? d->height - vh : 0;
-            b->line = vh / 14 > 0 ? vh / 14 : 1;              /* 21 px on the help pages (measured) */
-            b->range = (b->maxoff + b->line - 1) / b->line;
+            b->range = (int)((uint32_t)v->raw[10] << 16 | v->raw[11]);   /* the content's position count */
+            uint32_t page = (uint32_t)c->raw[27] << 16 | c->raw[28];     /* the bar's page step */
+            b->page = page ? (int)page : 1;
         } else if (g->idx_list >= 0) {
             g->idx_sb = g->nsb;
         } else {
@@ -439,12 +449,18 @@ static void draw_scrollbar(Game *g, const DkObject *o, const ScrollBar *b, int o
     int pressed_down = g->press_part == PART_DOWN && g->sb + g->press_sb == b;
     /* the record names its bitmaps: @LINEUP @LINEDOWN @THUMB @THUMBTRACK, then the ...ALT (pressed) set */
     const uint16_t *names = o->children[b->bar].raw + 14;
-    Rect track = {r.x, r.y + 16, r.w, r.h - 32};
+    /* the track is two parts (page up above the thumb, page down below it), each drawing
+     * THUMBTRACK from its own top - the checkered pattern restarts under the thumb */
+    int ty = sb_thumb_y(b, r);
+    Rect up = {r.x, r.y + 16, r.w, ty - (r.y + 16)};
+    Rect down = {r.x, ty + 16, r.w, r.y + r.h - 16 - (ty + 16)};
     const Dib *d;
-    if ((d = exe_bitmap(g, names[3])))
-        blit_clipped(g->screen, d, r.x, r.y + 16, track);
+    if ((d = exe_bitmap(g, names[3]))) {
+        blit_clipped(g->screen, d, up.x, up.y, up);
+        blit_clipped(g->screen, d, down.x, down.y, down);
+    }
     if ((d = exe_bitmap(g, names[2])))
-        blit_clipped(g->screen, d, r.x, sb_thumb_y(b, r), r);
+        blit_clipped(g->screen, d, r.x, ty, r);
     if ((d = exe_bitmap(g, names[pressed_up ? 4 : 0])))
         blit_clipped(g->screen, d, r.x, r.y, r);
     if ((d = exe_bitmap(g, names[pressed_down ? 5 : 1])))
@@ -1045,33 +1061,45 @@ static void sb_set(Game *g, const DkObject *o, ScrollBar *b, int pos)
     g->dirty = 1;
 }
 
+/* Which part of bar b is under (x, y), by the original's hit order (FUN_1048_bfce). */
+static int sb_part(const ScrollBar *b, Rect r, int x, int y)
+{
+    if (!in_rect(r, x, y))
+        return PART_NONE;
+    int ty = sb_thumb_y(b, r);
+    if (y < r.y + 16)
+        return PART_UP;
+    if (y < ty)
+        return PART_PAGEUP;
+    if (y < ty + 16)
+        return PART_THUMB;
+    if (y < r.y + r.h - 16)
+        return PART_PAGEDOWN;
+    return PART_DOWN;
+}
+
+static void sb_step(Game *g, const DkObject *o, ScrollBar *b, int part)
+{
+    int d = part == PART_UP ? -1 : part == PART_DOWN ? 1 : part == PART_PAGEUP ? -b->page : b->page;
+    sb_set(g, o, b, b->pos + d);
+}
+
 static int sb_click(Game *g, const DkObject *o, int ox, int oy, int x, int y)
 {
     for (int i = 0; i < g->nsb; i++) {
         ScrollBar *b = &g->sb[i];
         if (b->content < 0)
             sb_update_range(g, o, b);
-        Rect r = sb_rect(o, b, ox, oy);
-        if (!in_rect(r, x, y))
+        int part = sb_part(b, sb_rect(o, b, ox, oy), x, y);
+        if (part == PART_NONE)
             continue;
-        int ty = sb_thumb_y(b, r);
         g->press_sb = i;
-        if (y < r.y + 16) {
-            g->press_part = PART_UP;
-            sb_set(g, o, b, b->pos - 1);
-        } else if (y >= r.y + r.h - 16) {
-            g->press_part = PART_DOWN;
-            sb_set(g, o, b, b->pos + 1);
-        } else if (y >= ty && y < ty + 16) {
-            g->press_part = PART_THUMB;
-            g->drag_off = y - ty;
-            return 1;
-        } else {
-            int page = b->content >= 0 ? 14 : idx_rows(g, o) - 1;   /* one click pages the help to its end (verified) */
-            sb_set(g, o, b, b->pos + (y < ty ? -page : page));
-            return 1;
+        g->press_part = part;
+        if (part != PART_THUMB) {             /* the thumb only starts a drag */
+            sb_step(g, o, b, part);
+            g->press_next_ns = SDL_GetTicksNS() + SB_FIRST_REPEAT_NS;
         }
-        g->press_next_ns = SDL_GetTicksNS() + 400000000ull;          /* auto-repeat while held */
+        g->dirty = 1;
         return 1;
     }
     return 0;
@@ -1196,6 +1224,8 @@ static int nav_button_at(Game *g, int x, int y)
 
 void game_click(Game *g, int x, int y)
 {
+    g->mouse_x = x;
+    g->mouse_y = y;
     if (g->media.kind) {
         /* Verified in the original: a click during an auto-play animation (title, film) skips it -
          * it stops and its event 6 fires; a click during media started by a click only stops it. */
@@ -1253,14 +1283,16 @@ void game_mouse_up(Game *g)
 
 void game_motion(Game *g, int x, int y)
 {
-    if (g->press_part == PART_THUMB && g->npopups && g->press_sb < g->nsb) {   /* drag the thumb */
+    g->mouse_x = x;
+    g->mouse_y = y;
+    if (g->press_part == PART_THUMB && g->npopups && g->press_sb < g->nsb) {   /* drag: thumb centred on the pointer */
         DkObject *o = object(g, g->popups[g->npopups - 1]);
         Rect pr = popup_rect(g, o);
         ScrollBar *b = &g->sb[g->press_sb];
         Rect r = sb_rect(o, b, pr.x, pr.y + STRIP_H);
         int travel = r.h - 47;
         if (travel > 0 && b->range > 0)
-            sb_set(g, o, b, ((y - g->drag_off - r.y - 16) * b->range * 2 + travel) / (2 * travel));
+            sb_set(g, o, b, ((y - 8 - r.y - 16) * b->range * 2 / travel + 1) >> 1);
         return;
     }
     int hand = 0, obj = -1, k = -1;
@@ -1348,12 +1380,15 @@ int game_popup(const Game *g) { return g->npopups ? g->popups[g->npopups - 1] : 
 
 void game_update(Game *g)
 {
-    if (g->press_part == PART_UP || g->press_part == PART_DOWN) {             /* arrow held: repeat */
+    if (g->press_part != PART_NONE && g->press_part != PART_THUMB) {   /* held: repeat while on the part */
         Uint64 now = SDL_GetTicksNS();
         if (now >= g->press_next_ns && g->npopups && g->press_sb < g->nsb) {
+            DkObject *o = object(g, g->popups[g->npopups - 1]);
+            Rect pr = popup_rect(g, o);
             ScrollBar *b = &g->sb[g->press_sb];
-            sb_set(g, object(g, g->popups[g->npopups - 1]), b, b->pos + (g->press_part == PART_UP ? -1 : 1));
-            g->press_next_ns = now + 100000000ull;
+            if (sb_part(b, sb_rect(o, b, pr.x, pr.y + STRIP_H), g->mouse_x, g->mouse_y) == g->press_part)
+                sb_step(g, o, b, g->press_part);
+            g->press_next_ns = now + SB_TICK_NS;
         }
     }
     if (g->dirty)
