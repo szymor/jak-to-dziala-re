@@ -118,7 +118,12 @@ Win16 NE, 86 segments (12 code, 74 data; several 64 KB data segments). Imports `
 
 ### Compressed redistributables in `DKCODE/*.??_`
 - 5 files are **SZDD** (WinG 1.0: `WING.DLL`, `WINGDE.DLL`, `WINGDIB.DRV`, `WINGPAL.WND`, `WING32.DLL`). 7-Zip unpacks them, and `tools/unpack_szdd.py` restores the names. They are needed to run the original under Wine.
-- 30 files are **KWAJ** (Video for Windows 1.1, OLE2, Cinepak/Indeo codecs, MPLAYER). 7-Zip can't read them, and they aren't needed (ANI isn't AVI). Not unpacked.
+- 35 files are **KWAJ**. 7-Zip can't read them. They were not unpacked: they were identified from their names, and the port needs none of them. They are the standard Windows 3.1 add-ons that the installer sets up on a bare system:
+  - *Video for Windows 1.1*: `MSVIDEO`, `AVIFILE`, `AVICAP`, `MCIAVI`, `DISPDIB`, `DCISVGA`, `DVA.386`, the codecs `ICCVID` (Cinepak), `IR21`/`IR32`/`IYVU9` (Indeo), `MSVIDC`, `MSRLE`, and `MPLAYER` with its help and registry files. Not needed: there is no AVI on the CD, and all animation is in the custom ANI format.
+  - *Audio Compression Manager*: `MSACM.DLL/.DRV`, `MSADPCM.ACM`, `IMAADPCM.ACM`, `ACMCMPRS`. The original does need this group indirectly: MMSYSTEM passes the MS-ADPCM WAVs to ACM for decoding. Wine provides its own built-in ACM, and the port doesn't need it because SDL3 decodes MS-ADPCM itself.
+  - *OLE2*: `OLE2*`, `COMPOBJ`, `STORAGE`, `TYPELIB`, `STDOLE`, `MCIOLE`, `CLEANUP.REG`.
+  - *Misc*: `CTL3D` and `MAP_WIN.HLP`. These and OLE2 are probably for the installer or for opening `CZYTAJ.WRI` in Write; not checked against `DKSETUP`.
+  - `TWTW.EXE` imports none of these DLLs and doesn't mention MSVIDEO, AVIFILE, COMPOBJ, OLE2 or MCIAVI anywhere.
 
 ## 4. Running the original (reference)
 
