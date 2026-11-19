@@ -1,4 +1,4 @@
-path,dir,name,ext,size,kind,subject,index,role,sub,media,width,height,bpp,compression,colors,palette_sha1,format,channels,rate,bits,byte_rate,data_bytes,seconds,ani_version,frames,fps,ani_field8,audio_bytes_per_frame,magic_at,segments,unpacked_bytes,last_char
+path,dir,name,ext,size,kind,subject,index,role,sub,media,width,height,bpp,compression,colors,palette_sha1,format,channels,rate,bits,byte_rate,data_bytes,seconds,ani_version,frames,fps,preroll_s,audio_bytes_per_frame,magic_at,segments,unpacked_bytes,last_char
 AUTORUN.EXE,,AUTORUN,EXE,26012,ne,,,,,,,,,,,,,,,,,,,,,,,,,2,,
 AUTORUN.INF,,AUTORUN,INF,52,other,,,,,,,,,,,,,,,,,,,,,,,,,,,
 INSTALUJ.EXE,,INSTALUJ,EXE,18564,ne,,,,,,,,,,,,,,,,,,,,,,,,,2,,

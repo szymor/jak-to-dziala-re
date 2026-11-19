@@ -80,7 +80,9 @@ Other schemes: `AZnn0M.DIB` (A–Z pages), `TTnn0M.DIB` (timeline pages), `Ixxxx
 ### WAV (100 files): solved
 - 97 × MS-ADPCM, 22050 Hz, 4-bit, mono. 3 × PCM 8-bit 22050 Hz mono. SDL3 `SDL_LoadWAV` handles both.
 
-### ANI (497 files): header understood, frames not yet
+### ANI (497 files): solved in phase 2, see [formats/ani.md](formats/ani.md)
+The phase 1 notes below are kept for history. The table's unknown fields are now explained: 0x08 is the audio lead in seconds, and 0x0a is the size (16) of the PCMWAVEFORMAT block.
+
 Little-endian header, 0x34 bytes:
 
 | Off | Type | Meaning | Values seen |

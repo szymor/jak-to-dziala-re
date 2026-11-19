@@ -58,7 +58,7 @@ def wav_info(d):
 
 
 def ani_info(d):
-    # Provisional layout (see docs/inventory.md); confirmed fields only.
+    # Header fields only; see docs/formats/ani.md and tools/ani.py.
     if len(d) < 0x3a:
         return {'kind': 'ani?'}
     magic_at = d.find(b'funky!', 0, 256)
@@ -67,7 +67,7 @@ def ani_info(d):
         'ani_version': u16(d, 0),
         'frames': u16(d, 2),
         'fps': u16(d, 6),
-        'ani_field8': u16(d, 8),
+        'preroll_s': u16(d, 8),
         'rate': u32(d, 0x12),
         'bits': u16(d, 0x1c),
         'audio_bytes_per_frame': u32(d, 0x20),
@@ -97,7 +97,7 @@ def ne_info(d):
 FIELDS = ['path', 'dir', 'name', 'ext', 'size', 'kind', 'subject', 'index', 'role', 'sub', 'media',
           'width', 'height', 'bpp', 'compression', 'colors', 'palette_sha1',
           'format', 'channels', 'rate', 'bits', 'byte_rate', 'data_bytes', 'seconds',
-          'ani_version', 'frames', 'fps', 'ani_field8', 'audio_bytes_per_frame', 'magic_at',
+          'ani_version', 'frames', 'fps', 'preroll_s', 'audio_bytes_per_frame', 'magic_at',
           'segments', 'unpacked_bytes', 'last_char']
 
 
