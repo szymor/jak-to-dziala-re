@@ -5,3 +5,4 @@ Jak To Działa.iso
 # Extracted assets / work dirs
 /work/
 __pycache__/
+/build/
