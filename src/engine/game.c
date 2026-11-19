@@ -233,11 +233,12 @@ static void compose(Game *g)
         if (!o)
             continue;
         Rect r = popup_rect(g, o);
-        /* 4-px 50% checkerboard drop shadow, right and below (measured in the original) */
+        /* 4-px drop shadow, right and below: black on a checkerboard, the image beneath shows between */
         for (int y = r.y + 4; y < r.y + r.h + 4; y++)
             for (int x = r.x + 4; x < r.x + r.w + 4; x++)
-                if ((x >= r.x + r.w || y >= r.y + r.h) && x >= 0 && x < SCREEN_W && y >= 0 && y < SCREEN_H)
-                    s->pixels[y * SCREEN_W + x] = ((x + y) & 1) ? SYS_WHITE : SYS_BLACK;
+                if ((x >= r.x + r.w || y >= r.y + r.h) && !((x + y) & 1) && x >= 0 && x < SCREEN_W && y >= 0 &&
+                    y < SCREEN_H)
+                    s->pixels[y * SCREEN_W + x] = SYS_BLACK;   /* every other pixel; the rest shows through */
         fill(s, r.x, r.y, r.w, 1, SYS_BLACK);                     /* title strip: border line ... */
         fill(s, r.x, r.y + 1, r.w, STRIP_H - 1, SYS_NAVY);        /* ... caption ... */
         fill(s, r.x, r.y + 1, STRIP_H - 1, STRIP_H - 1, SYS_SILVER); /* ... system-menu box */
@@ -322,10 +323,10 @@ static void set_page_layout(Game *g, const DkObject *o)
         g->page_rect = g->page_panel;
 }
 
-static void start_idle(Game *g)
+/* Idle animations resume a few seconds after the last interaction, continuing the sequence. */
+static void delay_idle(Game *g, Uint64 seconds)
 {
-    g->idle_pos = 0;
-    g->idle_next_ns = SDL_GetTicksNS() + 1000000000ull;     /* first idle animation after 1 s */
+    g->idle_next_ns = SDL_GetTicksNS() + seconds * 1000000000ull;
 }
 
 static void enter_page(Game *g, int target)
@@ -345,7 +346,8 @@ static void enter_page(Game *g, int target)
     for (int k = 0; k < o->nchild && g->nidle < 32; k++)
         if (o->children[k].cls == 7 && o->children[k].shape == 20)
             g->idle_child[g->nidle++] = k;
-    start_idle(g);
+    g->idle_pos = 0;
+    delay_idle(g, 2);
     run_events(g, target, o->events, o->nevents, 1);        /* event 1: on open */
     /* auto-play animation (class 7, shape 36): plays now, event 6 when it ends */
     for (int k = 0; k < o->nchild; k++) {
@@ -509,7 +511,7 @@ static void media_finished(Game *g)
         if (o && child < o->nchild)
             run_events(g, obj, o->children[child].events, o->children[child].nevents, 6);
     } else if (end == END_IDLE) {
-        g->idle_next_ns = SDL_GetTicksNS() + 1500000000ull;
+        delay_idle(g, 2);
     }
 }
 
@@ -570,12 +572,12 @@ static int in_rect(Rect r, int x, int y) { return x >= r.x && x < r.x + r.w && y
 
 void game_click(Game *g, int x, int y)
 {
-    if (g->media.kind) {                 /* verified rule: a click while media plays only stops it */
+    delay_idle(g, 5);
+    if (g->media.kind) {                 /* verified rule: a click while media plays only stops it ... */
         int was_idle = g->media.end == END_IDLE;
         media_stop(g);
-        if (was_idle)
-            start_idle(g);
-        return;
+        if (!was_idle)
+            return;                      /* ... but an idle animation must not swallow the click */
     }
     if (g->npopups) {
         int top = g->popups[g->npopups - 1];
@@ -671,7 +673,7 @@ void game_update(Game *g)
         if (media_ani(g, path, g->page_rect.x, g->page_rect.y) == 0)
             g->media.end = END_IDLE;
         else
-            g->idle_next_ns = SDL_GetTicksNS() + 1500000000ull;
+            delay_idle(g, 2);
     }
 }
 

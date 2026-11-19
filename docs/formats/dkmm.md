@@ -181,7 +181,7 @@ Checked against the running original with `tools/orig.sh` and pixel matching of 
 | index entry "Akumulator samochodowy - bateria" → page 104 + pop-up 274 | exact |
 | action 1 replaces the pop-up, action 3 opens a pop-up or navigates, event 6 = animation end, links = context navigation | as described above |
 
-Pop-ups therefore need an 8-px title strip in the port, or the bitmap must be drawn at `y + 8`.
+Pop-ups therefore need an 8-px title strip in the port, or the bitmap must be drawn at `y + 8`. They also cast a 4-px drop shadow to the right and below: black on every other pixel of a checkerboard (black where x + y is even), with the image beneath showing through the rest. Wine paints the in-between pixels white, which real Windows doesn't (confirmed from memory of the original on Windows); the port follows Windows.
 
 ## Port notes
 
