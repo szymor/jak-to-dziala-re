@@ -122,7 +122,7 @@ events = u16 count, count × { u16 event, u16 nactions, actions }
 | 3, sub 1 | `0 0 0 0 file_ref` | **bitmap**: background picture of the object, an opaque rectangle |
 | 3, sub 2 | hotspot + `0 4` | **hotspot** (≈ 9 500): `shape` 4 = rectangle (5 and 1 also occur); usually cursor `Hand` |
 | 3, sub = name | hotspot + `0 4` | named hotspot (title screen, full-screen click area) |
-| 4 | hotspot + `0 4 n` | A–Z dial letter region; `n` is the letter number |
+| 4 | hotspot + `0 4 n` | A–Z dial region: `n` 0–23 = letter (select; plays the needle animation `azaz0m?a` from the dial table), 24/25 = rotate left/right arrows, 26 = OK (go to the dial table's target for the selected letter). Verified: letter 2 + OK → `AZ020M`. |
 | 5, sub 2 | hotspot | inert region, no events; one at the end of many pages |
 | 7, sub 2 | hotspot + `anim_ref 1 0 0 0 0 0 107` | **auto-play animation** element: plays `anim_ref` (e.g. `QEMG1m0a`, the Workshop hub animations) and fires event 6 when it ends (verified) |
 | 2 | hotspot + `0 x0 y0 x1 y1 anim_ref cursor_ref 0 1 20 3 3 3 39 7 107` | **animation** element: an ANI file placed at the rectangle. Started by action 2 or by the object's open event. |
@@ -144,12 +144,12 @@ events = u16 count, count × { u16 event, u16 nactions, actions }
 | type | payload (words) | count | meaning (provisional) |
 |---|---|---:|---|
 | 1 | `u32 object, u16` | 2095 | open object, **replacing** the current pop-up (verified: Options → "Historie z życia mamutów" closes `OPTI00` and opens `OPTI01`) |
-| 2 | `u16 element_id, u16 107` | 99 | start the animation element with this id |
+| 2 | `u16 element_id, u16 107` | 99 | (re)start the page's animation element with this id (all class-2 elements use id 0x565) |
 | 3 | `u32 object, u16 flag` | 6889 | open object: a type-1 target opens as a pop-up (zoom, glossary link, "Patrz też" entry), a type-2 target navigates to that page (verified: mammoth story item → page 990). The flag is 1 for glossary-to-glossary links. |
-| 4 | `str, -1, -1, 1, 1, 0, 1` | 294 | play media (sound or animation) |
-| 7 | `str anim, -1, -1, -1, 1, 0, 0, 1, 0, 0` | 440 | play animation in place (e.g. `REFR0m0a` on the refrigerator page) |
+| 4 | `str, -1, -1, 1, 1, 0, 1` | 294 | **play sound**: the name is always a `…s` WAV (e.g. `BALO0m0s`) |
+| 7 | `str anim, -1, -1, -1, 1, 0, 0, 1, 0, 0` | 440 | **play animation** in place; always an ANI, always the same parameters (e.g. `REFR0m0a` on the refrigerator page) |
 | 12 | `u16 n` | 3 | select option `n` (Options screen radio buttons) |
-| 13 | `u32 object` | 1 | cancel / close back to object |
+| 13 | `u32 object` | 1 | close that object (the Options pop-up's Anuluj button names the pop-up itself) |
 
 All 8985 object references in actions fall inside the table.
 
@@ -184,4 +184,6 @@ Pop-ups therefore need an 8-px title strip in the port, or the bitmap must be dr
 
 - Load the pool, the object table and the index table at startup, and parse records lazily, as the original does. The C parser follows `tools/dkmm.py` one-to-one.
 - Rendering a page is: background bitmap at the page origin (94, 4), then any pop-ups (type 1): an 8-px title strip at `origin + (x, y)` and the bitmap below it. Hotspots are rectangles in the object's local coordinates. Animations play at their element rectangle.
-- Still to confirm: the action 4/7 parameters, action 13 and the A–Z dial behaviour.
+- **Back (Wróć)** is a page history stack (verified: `AZ020M` → A–Z → Workshop; at the bottom it stays put).
+- **Cursors:** only `Hand` (9716 elements, EXE cursor resource 107, hotspot (6, 0)) and `normal` (156, the system arrow) occur; the Index text field uses an I-beam.
+- Still open: the meaning of the constant action 4/7 parameters (-1 fields: probably position/loop defaults).

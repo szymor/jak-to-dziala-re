@@ -37,6 +37,11 @@ Without these settings the decompiler drops every call argument in this 16-bit c
 | 1030:8D7C | – | script expression evaluator |
 | 1038:3330 | – | text page-file parser (keyword dispatch) |
 | 1050:8BDA | – | list control notification handler (13 cases) |
+| 1010:42C4 | `PageFile_Open` | opens TWTW.PNG: header, string pool (`PageFile_ReadStringPool` 1010:46CA), directory block into a memory stream (parsed by 1020:5618), object table |
+| 1020:1F28 / 200A / 20B4 / 2050 | `Stream_ReadByte` / `Stream_ReadU16` / `Stream_ReadU32b` / `Stream_ReadU32` | big-endian stream readers; the deserialisers reach them mostly through virtual calls |
+| 1028:9C6C / 9CB0 / 9E72 | `File_Seek` / `File_HRead` / `File_HRead2` | file wrappers (the 0317:9CF3 / 9EB0 return addresses in the Wine trace) |
+| 1028:407A | – | "play animation" handler; errors 0x412/0x413 |
+| 1028:B29A | – | ANI player step: read the next chunk (1028:B81E), draw the frame (1048:A464 / A4DC), count frames; called once per tick |
 
 ## ANI playback findings
 
@@ -67,8 +72,8 @@ The data segment at 10B8:014F holds the engine's resource file-extension table, 
 
 ## Open items for the next Phase 3 pass
 
-1. The action dispatcher (semantics of actions 4, 7, 13 and the A–Z dial class 4). It hasn't been found yet; the 13/14-case switches checked so far were the list control and the GDI transitions.
-2. Back/history (Wróć), and the cursor mapping (`Hand`, `normal`, `IBeam`, `zoom`, `none` → resources 107/157 or system cursors).
+1. Action semantics, the A–Z dial, Back and cursors are now settled from the data plus runtime checks (see docs/formats/dkmm.md). The dispatcher code itself still isn't located: the deserialisers and actions are reached through C++ virtual calls.
+2. The ANI tick source (timer or `waveOut` callback). The port drives frames from the audio position instead.
 3. The transparent-flag source and key index for animations.
 4. The template field → transition type mapping.
 5. Options: copy window (clipboard), print (`PrintDlg`, `PRINTABORTDLG`).
