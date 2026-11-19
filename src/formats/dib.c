@@ -66,16 +66,16 @@ int dib_decode(const uint8_t *d, size_t size, Dib *out, char *err, size_t errlen
     int32_t w = (int32_t)rd_le32(d + 18), h = (int32_t)rd_le32(d + 22);
     uint16_t bpp = rd_le16(d + 28);
     uint32_t comp = rd_le32(d + 30), used = rd_le32(d + 46);
-    if (bpp != 8)
-        return fail(err, errlen, "only 8-bit bitmaps are supported");
-    if (comp != BI_RGB && comp != BI_RLE8)
+    if (bpp != 1 && bpp != 4 && bpp != 8)
+        return fail(err, errlen, "only 1, 4 and 8-bit bitmaps are supported");
+    if (comp != BI_RGB && !(comp == BI_RLE8 && bpp == 8))
         return fail(err, errlen, "unsupported BMP compression");
     int bottom_up = h > 0;
     if (h < 0)
         h = -h;
     if (w <= 0 || h <= 0 || w > 8192 || h > 8192)
         return fail(err, errlen, "bad BMP dimensions");
-    int ncol = used ? (int)used : 256;
+    int ncol = used ? (int)used : 1 << bpp;
     if (ncol > 256 || 14 + hdr + (size_t)ncol * 4 > size || bits_off >= size)
         return fail(err, errlen, "bad BMP palette");
     for (int i = 0; i < ncol; i++) {
@@ -96,13 +96,22 @@ int dib_decode(const uint8_t *d, size_t size, Dib *out, char *err, size_t errlen
             return fail(err, errlen, "corrupt RLE8 data");
         }
     } else {
-        size_t stride = ((size_t)w + 3) & ~(size_t)3;
+        size_t stride = (((size_t)w * bpp + 31) / 32) * 4;
         if (stride * h > avail) {
             dib_free(out);
             return fail(err, errlen, "truncated BMP pixel data");
         }
-        for (int y = 0; y < h; y++)
-            memcpy(out->pixels + (size_t)(bottom_up ? h - 1 - y : y) * w, bits + stride * y, (size_t)w);
+        for (int y = 0; y < h; y++) {
+            const uint8_t *row = bits + stride * y;
+            uint8_t *dst = out->pixels + (size_t)(bottom_up ? h - 1 - y : y) * w;
+            if (bpp == 8) {
+                memcpy(dst, row, (size_t)w);
+            } else {
+                int per = 8 / bpp, mask = (1 << bpp) - 1;
+                for (int x = 0; x < w; x++)
+                    dst[x] = (uint8_t)((row[x / per] >> ((per - 1 - x % per) * bpp)) & mask);
+            }
+        }
     }
     return 0;
 }

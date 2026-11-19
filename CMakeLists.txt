@@ -19,13 +19,16 @@ add_library(twtw_core STATIC
   src/vfs/vfs.c
   src/vfs/iso9660.c
   src/formats/dib.c
+  src/formats/ani.c
+  src/formats/dkmm.c
+  src/formats/ne_res.c
   src/util/bytes.c
 )
 target_include_directories(twtw_core PUBLIC src)
 target_link_libraries(twtw_core PUBLIC SDL3::SDL3)
 
 # The player.
-add_executable(twtw src/main.c)
+add_executable(twtw src/main.c src/platform/screen.c src/engine/ani_player.c)
 target_link_libraries(twtw PRIVATE twtw_core)
 
 # Command-line tool for checks and dumps (no window).

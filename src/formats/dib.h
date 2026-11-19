@@ -1,4 +1,4 @@
-/* Windows DIB/BMP reader for the game's 8-bit bitmaps (RLE8 or uncompressed). */
+/* Windows DIB/BMP reader: 8-bit RLE8 or uncompressed 1/4/8-bit (the CD bitmaps and the EXE's UI bitmaps). */
 #ifndef TWTW_DIB_H
 #define TWTW_DIB_H
 

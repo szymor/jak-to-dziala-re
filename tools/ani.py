@@ -4,6 +4,7 @@
 Usage:
   python3 -I tools/ani.py info FILE.ANI
   python3 -I tools/ani.py export FILE.ANI OUT_DIR [--bg PAGE.DIB] [--pal ANY.DIB]
+  python3 -I tools/ani.py hash CD_DIR      (compare with: twtw-tool ani-hash)
 
 export writes OUT_DIR/frame_NNN.png (each frame composited over the previous
 one, starting from --bg or a black canvas) and OUT_DIR/audio.wav.
@@ -117,10 +118,44 @@ def cmd_export(path, out, bg=None, pal=None):
     print(f"{len(frames)} frames at {hdr['fps']} fps -> {out}")
 
 
+def fnv(h, b):
+    for x in b:
+        h = ((h ^ x) * 1099511628211) & 0xFFFFFFFFFFFFFFFF
+    return h
+
+
+def cmd_hash(cd):
+    """One line per ANI, same format as twtw-tool ani-hash (frames, fps, preroll, frame hash, audio)."""
+    import os
+    for dp, dns, fns in sorted(os.walk(cd)):
+        dns.sort()
+        for fn in sorted(fns):
+            if not fn.upper().endswith('.ANI'):
+                continue
+            rel = os.path.relpath(os.path.join(dp, fn), cd).replace(os.sep, '/').upper()
+            try:
+                hdr, chunks = parse(open(os.path.join(dp, fn), 'rb').read())
+            except ValueError as e:
+                print(f'{rel} FAIL {e}')
+                continue
+            h = 1469598103934665603
+            for j, rect, w, hh, px in video_frames(hdr, chunks):
+                if not px:
+                    h = fnv(h, struct.pack('<H', j & 0xFFFF))
+                    continue
+                h = fnv(h, struct.pack('<5H', j & 0xFFFF, *rect))
+                h = fnv(h, px)
+            audio = b''.join(c['audio'] for c in chunks)
+            print(f"{rel} {hdr['frames']} {hdr['fps']} {hdr['preroll_chunks']} {h:016x} {len(audio)} "
+                  f"{fnv(1469598103934665603, audio):016x}")
+
+
 if __name__ == '__main__':
     a = sys.argv[1:]
     if a[:1] == ['info']:
         cmd_info(a[1])
+    elif a[:1] == ['hash']:
+        cmd_hash(a[1])
     elif a[:1] == ['export']:
         opt = dict(zip(a[3::2], a[4::2]))
         cmd_export(a[1], a[2], opt.get('--bg'), opt.get('--pal'))

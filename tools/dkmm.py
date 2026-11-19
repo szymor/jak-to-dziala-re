@@ -11,6 +11,7 @@ Usage:
   python3 -I tools/dkmm.py dump    work/cd/DKCODE/TWTW.PNG OUT.txt
   python3 -I tools/dkmm.py index   work/cd/DKCODE/TWTW.PNG
   python3 -I tools/dkmm.py templates work/cd/DKCODE/TWTW.PNG
+  python3 -I tools/dkmm.py canonical work/cd/DKCODE/TWTW.PNG   (compare with: twtw-tool dkmm-dump)
 """
 import collections
 import struct
@@ -73,7 +74,7 @@ class Dkmm:
             text = self.string(ref)
             if z or text is None or len(text) != ln:
                 return None, o
-            out.append({'text': text, 'page': page, 'popups': list(struct.unpack_from(f'>{k}I', d, o))})
+            out.append({'ref': ref, 'text': text, 'page': page, 'popups': list(struct.unpack_from(f'>{k}I', d, o))})
             o += 4 * k
         return out, o
 
@@ -410,9 +411,84 @@ def fmt_object(dk, i):
     return '\n'.join(lines)
 
 
+def canonical(dk, w):
+    """Plain dump shared with the C port (twtw-tool dkmm-dump); diff the two outputs."""
+    def ev(evl):
+        for e in evl:
+            w(f"e {e['event']} {len(e['actions'])}")
+            for a in e['actions']:
+                w('a ' + ' '.join(str(x) for x in [a['type']] + list(a['args'])))
+    w(f'strings {len(dk.strings)}')
+    for i, t in enumerate(dk.strings, 1):
+        w(f"s {i} {t.encode('cp1250').hex() or '-'}")
+    t = dk.parse_templates()
+    w(f"screen {t['screen'][0]} {t['screen'][1]}")
+    for b in t['bases']:
+        w(f"base {b['kind']} {b['name']} {len(b['header_raw']) // 2} {len(b['panels'])}")
+        for p in b['panels']:
+            x, y, pw, ph = p['rect']
+            w(f"p {p['kind']} {p['name']} {int(p['object'] is not None)} {p['object'] or 0} {p['rgb']} {x} {y} {pw} {ph}")
+    for x in t['templates']:
+        names = x.get('panels', [])
+        w(f"tpl {x['kind']} {x['name']} {x['rgb']} " + ' '.join(map(str, x['rect'])) + f" {len(names)}"
+          + ''.join(f' {n}' for n in names))
+    for st in t['styles']:
+        w(f"style {st['name']} {st['ref']} " + ' '.join(st['colours']) + f" {st['value']} {st['face']}")
+    _, idx = dk.find_index()
+    w(f'index {len(idx)}')
+    for e in idx:
+        w(' '.join(str(v) for v in ['i', e['ref'], e['page']] + e['popups']))
+    w(f'objects {len(dk.obj_off)}')
+    for i in range(len(dk.obj_off)):
+        try:
+            o = parse_object(dk.object_bytes(i))
+        except ParseError as e:
+            w(f'o {i} FAIL {e}')
+            continue
+        p = o.get('w6_8', [0, 0, 0])
+        w(' '.join(str(v) for v in ['o', i, o['type'], o['w1'] if o['type'] else o['name'], o['pos'][0], o['pos'][1],
+                                    o['dir'], o.get('w5', 0), p[0], p[1], p[2], o['nchildren'], o['id'],
+                                    o['size'][0], o['size'][1]]))
+        for c in o['children']:
+            k = c['class']
+            if k == 3 and c.get('sub') == 1:
+                w(f"c bitmap {c['file']}")
+            elif k in (6, 9, 10, 14):
+                w(' '.join(str(v) for v in ['c raw', k] + ([c['id']] if k == 6 else []) + list(c['raw'])))
+            else:
+                w(' '.join(str(v) for v in ['c hot', k, c['sub'], c['id'], c['shape']] + list(c['rect'])
+                           + [c['cursor']] + list(c['flags']) + [len(c['events'])]))
+                ev(c['events'])
+                tail = c.get('tail', [])
+                w(' '.join(str(v) for v in ['c tail', len(tail)] + list(tail)))
+                if k == 2:
+                    a = c['anim']
+                    w(' '.join(str(v) for v in ['c anim'] + list(a['rect']) + [a['file'], a['cursor']] + list(a['params'])))
+                elif k in (15, 16):
+                    w(f"c img {c['images'][0]} {c['images'][1]}")
+                elif k == 12:
+                    w(f"c style {c['style']}")
+                elif k == 13:
+                    w(f"c list {c['colours'][0]} {c['colours'][1]} {c['source']} {c['flag']} {c['face']} {c['style']}")
+        if o['type'] == 0:
+            for bid, tgt in o['links']:
+                w(f'k {bid} {tgt}')
+        else:
+            w(f"r {len(o['events'])}")
+            ev(o['events'])
+            if o['table']:
+                tb = o['table']
+                w(' '.join(str(v) for v in ['t', len(tb['targets'])] + tb['targets'] + list(tb['anims']) + [tb['extra']]))
+            for ln in o['links']:
+                w('k ' + ' '.join(map(str, ln)))
+
+
 def main(argv):
     cmd, path = argv[0], argv[1]
     dk = Dkmm(open(path, 'rb').read())
+    if cmd == 'canonical':
+        canonical(dk, print)
+        return
     if cmd == 'templates':
         t = dk.parse_templates()
         print(f"version {t['version']} screen {t['screen']}")
