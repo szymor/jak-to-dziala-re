@@ -101,7 +101,9 @@ Little-endian header, 0x34 bytes:
 
 After the magic come 8-bit unsigned PCM samples (0x80 = silence), so audio and video chunks are interleaved per frame. The frame chunk format is the main task for phase 2.
 
-### TWTW.PNG (DKMM data file, 650 382 bytes): header and string pool solved
+### TWTW.PNG (DKMM data file, 650 382 bytes): see [formats/dkmm.md](formats/dkmm.md) for the phase 2 layout
+Phase 2 correction: the two header words read below as `u16 1, u16 0x3532` are one u32, the object table offset 0x13532, and string references are 1-based.
+
 All big-endian:
 ```
 str "DKMM"  str "11"  str "Windows"  str "PP"  str "PO"  str "Jak to działa?"
@@ -116,6 +118,7 @@ binary records ...                           -- 0xE1FA .. end, starts 00 01 02 8
 - Mapping subject codes to titles needs the record section (phase 2).
 
 ### TWTW.EXE
+Resources and string tables: [formats/exe_resources.md](formats/exe_resources.md).
 Win16 NE, 86 segments (12 code, 74 data; several 64 KB data segments). Imports `KERNEL, GDI, USER, WIN87EM, WING, COMMDLG, MMSYSTEM`. MSVC 1.5x. The EXE contains window/panel class names such as `NavHotspot`, `NavPanel` and `AZDial`, plus parser messages for the panel/template/event/action script language. Resources not yet extracted.
 
 ### Compressed redistributables in `DKCODE/*.??_`
