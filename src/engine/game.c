@@ -29,7 +29,7 @@ typedef struct CachedDib {
     int ok;
 } CachedDib;
 
-enum { END_NONE, END_EVENT6, END_NAV, END_IDLE };
+enum { END_NONE, END_EVENT6, END_NAV };
 
 typedef struct Media {
     int kind;                  /* 0 none, 1 ani, 2 wav */
@@ -37,6 +37,7 @@ typedef struct Media {
     SDL_AudioStream *wav;
     int end;                   /* what happens when it finishes */
     int end_obj, end_child, end_nav;
+    int skippable;             /* auto-play: a click finishes it (stop + event 6) instead of only stopping */
 } Media;
 
 struct Game {
@@ -65,8 +66,6 @@ struct Game {
     int history[MAX_HISTORY], nhistory;
 
     Media media;
-    int idle_child[32], nidle, idle_pos;  /* class-7 shape-20 idle animations of the page */
-    Uint64 idle_next_ns;
 
     int dirty;
     CachedDib cache[BITMAP_CACHE];
@@ -264,6 +263,7 @@ static void media_stop(Game *g)
     }
     g->media.kind = 0;
     g->media.end = END_NONE;
+    g->media.skippable = 0;
 }
 
 static int media_ani(Game *g, const char *path, int ox, int oy)
@@ -323,12 +323,6 @@ static void set_page_layout(Game *g, const DkObject *o)
         g->page_rect = g->page_panel;
 }
 
-/* Idle animations resume a few seconds after the last interaction, continuing the sequence. */
-static void delay_idle(Game *g, Uint64 seconds)
-{
-    g->idle_next_ns = SDL_GetTicksNS() + seconds * 1000000000ull;
-}
-
 static void enter_page(Game *g, int target)
 {
     DkObject *o = object(g, target);
@@ -341,13 +335,6 @@ static void enter_page(Game *g, int target)
     set_page_layout(g, o);
     g->dirty = 1;
     compose(g);
-    /* idle animations (class 7, shape 20) */
-    g->nidle = 0;
-    for (int k = 0; k < o->nchild && g->nidle < 32; k++)
-        if (o->children[k].cls == 7 && o->children[k].shape == 20)
-            g->idle_child[g->nidle++] = k;
-    g->idle_pos = 0;
-    delay_idle(g, 2);
     run_events(g, target, o->events, o->nevents, 1);        /* event 1: on open */
     /* auto-play animation (class 7, shape 36): plays now, event 6 when it ends */
     for (int k = 0; k < o->nchild; k++) {
@@ -359,6 +346,7 @@ static void enter_page(Game *g, int target)
                 g->media.end = END_EVENT6;
                 g->media.end_obj = target;
                 g->media.end_child = k;
+                g->media.skippable = 1;
             }
             break;
         }
@@ -510,8 +498,6 @@ static void media_finished(Game *g)
         DkObject *o = object(g, obj);
         if (o && child < o->nchild)
             run_events(g, obj, o->children[child].events, o->children[child].nevents, 6);
-    } else if (end == END_IDLE) {
-        delay_idle(g, 2);
     }
 }
 
@@ -572,12 +558,14 @@ static int in_rect(Rect r, int x, int y) { return x >= r.x && x < r.x + r.w && y
 
 void game_click(Game *g, int x, int y)
 {
-    delay_idle(g, 5);
-    if (g->media.kind) {                 /* verified rule: a click while media plays only stops it ... */
-        int was_idle = g->media.end == END_IDLE;
-        media_stop(g);
-        if (!was_idle)
-            return;                      /* ... but an idle animation must not swallow the click */
+    if (g->media.kind) {
+        /* Verified in the original: a click during an auto-play animation (title, film) skips it -
+         * it stops and its event 6 fires; a click during media started by a click only stops it. */
+        if (g->media.skippable)
+            media_finished(g);
+        else
+            media_stop(g);
+        return;
     }
     if (g->npopups) {
         int top = g->popups[g->npopups - 1];
@@ -665,15 +653,6 @@ void game_update(Game *g)
     } else if (g->media.kind == 2) {
         if (SDL_GetAudioStreamQueued(g->media.wav) <= 0)
             media_finished(g);
-    } else if (g->nidle && !g->npopups && SDL_GetTicksNS() >= g->idle_next_ns) {
-        DkObject *o = object(g, g->page);
-        int k = g->idle_child[g->idle_pos++ % g->nidle];
-        char path[256];
-        resolve(g, o->dir, o->children[k].file, ".ANI", path, sizeof path);
-        if (media_ani(g, path, g->page_rect.x, g->page_rect.y) == 0)
-            g->media.end = END_IDLE;
-        else
-            delay_idle(g, 2);
     }
 }
 

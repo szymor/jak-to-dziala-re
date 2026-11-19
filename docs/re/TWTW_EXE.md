@@ -84,5 +84,5 @@ Phase 3 is closed for the port's needs. Not traced (not needed): the action disp
 ## Behaviour notes from the runtime sessions
 
 - A click on a page hotspot outside an open pop-up first closes the pop-up (in one frame), then runs the hotspot's action.
-- The title screen ignores clicks for its first few seconds (probably until the intro animation ends); after that, a click goes to the Workshop.
-- The Workshop's class-7 animations loop on their own while the hub is idle.
+- A click during the title's auto-play animations skips them (stop + event 6); see docs/formats/dkmm.md for the full click rules. (An earlier note here claimed the title ignored clicks and the Workshop looped idle animations; both were wrong.)
+- There is no idle animation loop on the hub pages (verified with traces).
