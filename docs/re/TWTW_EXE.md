@@ -61,6 +61,10 @@ Without these settings the decompiler drops every call argument in this 16-bit c
 
 The type is a **property of the panel** (panel object +0x60, with a "pending" flag at +0x78). It probably comes from the template section's per-template fields (values 4, 8 and 9 occur there). In the running original, a page change from the nav bar happened within one captured frame, i.e. without a visible transition. Which transitions are used where is still open.
 
+## Resource types
+
+The data segment at 10B8:014F holds the engine's resource file-extension table, in order: `.wav .pag .png .ani .pan .pin .mic .sbm .pbk .txt .dib .trs .avi`, followed by the default cursor names `Arrow` and `Hand`. The text page writer's formatting strings (`{\r\n`, `\t}\r\n`, tabs) sit just before it. Only `.png` (the compiled page file), `.ani`, `.wav` and `.dib` occur on this CD. The rest (panels, sprite bitmaps `.sbm`, text, transition files `.trs`, AVI) belong to the authoring setup or other titles built on the engine. The index in this table is probably the resource-type code used by actions (to confirm).
+
 ## Open items for the next Phase 3 pass
 
 1. The action dispatcher (semantics of actions 4, 7, 13 and the A–Z dial class 4). It hasn't been found yet; the 13/14-case switches checked so far were the list control and the GDI transitions.
