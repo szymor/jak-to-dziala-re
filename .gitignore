@@ -4,3 +4,4 @@ Jak To Działa.iso
 /third_party/
 # Extracted assets / work dirs
 /work/
+__pycache__/
