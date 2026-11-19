@@ -49,7 +49,7 @@ Decisions, updated with what the analysis showed:
 - **Pop-ups:** a stack of panels. Each pop-up has an 8-px title strip above its bitmap (the original used tiny child windows). Action 1 replaces the top pop-up, action 3 pushes a pop-up or navigates, a click outside closes it, and action 13 closes it.
 - **Transitions:** none (the original shows none). Optional later; the 19 effects are documented.
 - **Animation and sound sync:** the audio clock is the master. The ANI's PCM goes into an `SDL_AudioStream`, and the displayed frame is `floor(played_samples × fps / rate)`, corrected for the device latency SDL reports. Frames are never dropped on a modern machine. See the note below on frame rate.
-- **Sound effects:** WAV through a second `SDL_AudioStream`. Whether a new sound interrupts the current one (the original had one `waveOut` device) needs a runtime check.
+- **Sound effects:** WAV through an `SDL_AudioStream`. One medium (sound or animation) at a time; while one plays, a click only stops it (verified), so no mixing is needed.
 - **Text:** only the Index screen draws text at runtime (list box + edit field, style `Times New Roman CE`, plus the colours from the template section). We can't ship that font, so use **SDL3_ttf** with a metric-compatible free serif (Liberation Serif or TeX Gyre Termes), letting the user point to their own TNR.
 - **EXE resources:** load the UI bitmaps and the hand cursor from the user's `TWTW.EXE` (`ne_res.c`), so no assets are shipped. The other cursor is the system arrow (`SDL_CreateColorCursor` / `SDL_SYSTEM_CURSOR_DEFAULT`).
 - **Options:** "copy window" → `SDL_SetClipboardData` with a BMP/PNG of the frame. Print → "save page as PNG" (and the system print dialog only if it's ever wanted).
@@ -71,16 +71,17 @@ Decisions, updated with what the analysis showed:
 2. **Formats in C:** `ani.c` (with an audio-clock player), `dkmm.c` (a port of `tools/dkmm.py`), `ne_res.c`. Test: a C dump of TWTW.PNG matches the Python dump byte for byte, and all 495 ANIs decode to the same frames as `tools/ani.py`.
 3. **Engine MVP:** title → Workshop → nav bar → one article with hotspots, pop-ups, animations, sounds, "Patrz też", Back.
 4. **All sections:** principles, inventors, timeline, A–Z dial, glossary links, mammoth stories, context nav buttons.
-5. **Widgets:** help scroll views, Index screen (list box with search-as-you-type, edit field, OK/Anuluj), Options (copy, save PNG).
+5. **Widgets:** help scroll views (class 9 + 10), Index screen (list box with Polish-collation lower-bound search, edit field, scroll bar, OK/Anuluj, Enter), Options (copy, save PNG).
 6. **Polish:** cursors, keyboard (Esc closes the pop-up, Backspace = Back), window scaling and fullscreen, settings, packages.
 7. **Regression harness:** reuse `tools/orig.sh` plus the pixel matcher to capture reference frames from the original, and compare port frames against them for a fixed list of screens.
 
 ## 7. Risks and open questions (current)
 
-- **Index screen object (812):** list box / edit field classes 12/13 aren't decoded. Its behaviour (search-as-you-type matching, Polish sort order) has to be observed in the original. The index table is already in alphabetical order.
-- **Sound behaviour:** overlap rules between WAV effects and ANI audio, volume, and what happens to a playing sound on page change. Needs runtime observation (Xvfb has no audio device; use Wine with a null or file audio driver, or listen once on your desktop).
-- **Constant parameters** of actions 4/7 and the template/base-header fields are undecoded. They're constant in the data, so low risk.
-- **Font metrics:** the Index list's layout depends on the font. Matching TNR exactly isn't possible without the user's font.
+Resolved since the first revision: the Index screen (all classes decode; search = Polish-collation lower bound, verified), sound behaviour (one medium at a time, any click stops the playing medium, verified by `waveOut` trace), and the class-10 scroll bar layout.
+
+- **Font metrics (low):** the Index list and edit field use `Times New Roman CE`, rows 12 px apart. A metric-compatible serif (Liberation Serif / TeX Gyre Termes) at that size will look close but not identical. The user can supply their own TNR.
+- **Constant fields (low):** the action 4/7 parameters and the two raw base-template headers never vary in the data; the port ignores them.
+- **Wine-only observations (low):** a note pop-up opened from the Index once painted blank in Wine; the original Win3.1 rendering is assumed to be normal. Animation frame skipping seen under Wine isn't reproduced by design.
 - **Legal:** the repository holds only code, specs and tools. The ISO, extracted assets and the Ghidra database stay out of git.
 
 ## 8. Software

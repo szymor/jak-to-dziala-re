@@ -1,6 +1,6 @@
 # TWTW.PNG: compiled DKMM page file
 
-Status: **the whole file decodes exactly**: header, pool, template section, index table and 1667 of 1668 object records, each consumed to the last byte. Still open: the Index screen's list box (one object) and the raw headers of the two base templates. Field names are inferred from the data and checked against it. The meanings of some constants are not confirmed yet.
+Status: **the whole file decodes exactly**: header, pool, template section, index table and all 1668 object records, each consumed to the last byte. Only the two base-template headers are kept raw. Field names are inferred from the data and checked against it. The meanings of some constants are not confirmed yet.
 
 ```bash
 python3 -I tools/dkmm.py summary work/cd/DKCODE/TWTW.PNG
@@ -127,9 +127,12 @@ events = u16 count, count × { u16 event, u16 nactions, actions }
 | 7, sub 2 | hotspot + `anim_ref 1 0 0 0 0 0 107` | **auto-play animation** element: plays `anim_ref` (e.g. `QEMG1m0a`, the Workshop hub animations) and fires event 6 when it ends (verified) |
 | 2 | hotspot + `0 x0 y0 x1 y1 anim_ref cursor_ref 0 1 20 3 3 3 39 7 107` | **animation** element: an ANI file placed at the rectangle. Started by action 2 or by the object's open event. |
 | 6 | hotspot + `anim_ref 1 0 0 0 0 0 107` | **navigation button**: grow animation `nav\navb0mNa` |
-| 10 | fixed 45 words | **scrolling bitmap view** (help pages): scroll bar rectangle, 8 scroll bar bitmaps from the EXE (`@LINEUP`, `@THUMB`, … where `@` means EXE resource), view rectangle, content bitmap (`Helpamt0`). It takes **2 child slots** (its content counts as a child). |
+| 10 | fixed 29 words | **scroll bar**: rectangle, 8 bitmaps from the EXE (`@LINEUP`, `@THUMB`, … where `@` means EXE resource), target element id, step (1 px on help pages, 10 in the Index list) |
+| 9 | fixed 15 words | **scrolled bitmap content** (help pages): view rectangle and the tall content bitmap (`Helpamt0`), scrolled by the class-10 bar that targets its id |
 | 15, 16 | hotspot + `out_img in_img …` (8 / 5 words) | **bitmap buttons** using the EXE's `@OKOUT/@OKIN`, `@CANCLOUT/@CANCLIN` |
-| 12, 13 | | text entry (`IBeam` cursor) and list box (inline Pascal strings `SimpleLBData`, `Regular`) in the Index screen only, not decoded |
+| 12 | hotspot + `0 0 0 style` | **text edit field** (Index search box, `IBeam` cursor, text style 0x0BE3) |
+| 13 | hotspot + `rgb rgb u16 pstr u8 pstr style` | **list box** (Index list): white/black colours, data source `SimpleLBData` (= the index table), face `Regular`, text style 0x0BE3 |
+| 14 | fixed 22 words | **list controller**: links the list box, edit field, scroll bar and OK button (Index screen) |
 
 ### Events
 
@@ -184,6 +187,8 @@ Pop-ups therefore need an 8-px title strip in the port, or the bitmap must be dr
 
 - Load the pool, the object table and the index table at startup, and parse records lazily, as the original does. The C parser follows `tools/dkmm.py` one-to-one.
 - Rendering a page is: background bitmap at the page origin (94, 4), then any pop-ups (type 1): an 8-px title strip at `origin + (x, y)` and the bitmap below it. Hotspots are rectangles in the object's local coordinates. Animations play at their element rectangle.
+- **Index screen (812)**, verified in the original: typing does an incremental, case-insensitive search. The list selects (yellow) the **first entry whose sort key is ≥ the typed text** and scrolls just enough to show it on the last visible row ("z" → "Zakład Tłoczniczy w Dover", "zeg" → "Zegar", "ż" → "Żagiel - łódź żaglowa", "qx" → "Radar"). The index table is already sorted under this key (0 inversions in 1320 entries): lower-case the text, order letters by the Polish alphabet `a ą b c ć d e ę f g h i j k l ł m n ń o ó p q r s ś t u v w x y z ź ż`, and put other characters (space, `-`, `,`, digits) before letters by code point. Enter = OK, which opens the entry's page and pop-ups. List rows are 12 px apart.
+- **Media and clicks**, verified with a `waveOut` relay trace: while a sound (action 4) or an animation (action 7 / class 2) is playing, **any click (hotspot, other media, nav button) only stops it**, and the clicked action is not run. Stopping an animation rewinds it. When nothing is playing, a click starts its media, so a second click on the same hotspot toggles it off. A page change stops the sound. At most one sound or animation plays at a time. Pages pre-open their WAV and ANI files when loaded.
 - **Back (Wróć)** is a page history stack (verified: `AZ020M` → A–Z → Workshop; at the bottom it stays put).
 - **Cursors:** only `Hand` (9716 elements, EXE cursor resource 107, hotspot (6, 0)) and `normal` (156, the system arrow) occur; the Index text field uses an I-beam.
 - Still open: the meaning of the constant action 4/7 parameters (-1 fields: probably position/loop defaults).

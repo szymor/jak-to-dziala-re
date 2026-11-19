@@ -242,10 +242,17 @@ def parse_hotspot(W):
 
 def parse_child(W):
     cls = W.get()
-    if cls == 10:                              # scrolling bitmap view (help pages)
-        t = W.get(45)
-        return {'class': 10, 'slots': 2, 'id': t[0], 'scrollbar_rect': t[1:5], 'cursor': t[5], 'name': t[7],
-                'scrollbar_bitmaps': t[14:22], 'view_rect': t[31:35], 'file': t[44], 'raw': t}
+    if cls == 10:                              # scroll bar control
+        t = W.get(29)
+        return {'class': 10, 'id': t[0], 'rect': t[1:5], 'cursor': t[5], 'target': t[7],
+                'bitmaps': t[14:22], 'step': t[28], 'raw': t}
+    if cls == 9:                               # scrolled bitmap content (help pages)
+        t = W.get(15)
+        return {'class': 9, 'id': t[0], 'rect': t[1:5], 'file': t[14], 'raw': t}
+    if cls == 14:                              # list controller: links list/edit/scroll bar/OK
+        t = W.get(22)
+        return {'class': 14, 'id': t[0], 'raw': t,
+                'links': [t[k] for k in range(14, 21, 2) if t[k - 1] == 1]}
     sub = W.get()
     c = {'class': cls, 'sub': sub}
     if cls == 6:                               # navigation button: hotspot + button animation
@@ -261,6 +268,26 @@ def parse_child(W):
         t = W.get(16)
         c['anim'] = {'rect': t[1:5], 'file': t[5], 'cursor': t[6], 'params': t[7:]}
         c['tail'] = [t[0]]
+    elif cls == 12:                            # text edit field: hotspot + text style
+        c.update(parse_hotspot(W))
+        if W.get() != 0:
+            raise ParseError('hotspot terminator')
+        t = W.get(4)
+        c.update(tail=t[:3], style=t[3])
+    elif cls == 13:                            # list box: hotspot + colours, data source, style
+        c.update(parse_hotspot(W))
+        if W.get() != 0:
+            raise ParseError('hotspot terminator')
+        b = struct.pack(f'>{len(W.w) - W.p}H', *W.w[W.p:])
+        fg, bg = b[0:3].hex(), b[3:6].hex()
+        o = 8
+        src = b[o + 1:o + 1 + b[o]].decode('cp1250'); o += 1 + b[o]
+        flag = b[o]; o += 1
+        face = b[o + 1:o + 1 + b[o]].decode('cp1250'); o += 1 + b[o]
+        if o % 2:
+            raise ParseError('list box tail not word aligned')
+        W.p += o // 2
+        c.update(colours=(fg, bg), source=src, flag=flag, face=face, style=W.get())
     elif cls in (15, 16):                      # bitmap button (OK / Cancel): hotspot + images
         c.update(parse_hotspot(W))
         if W.get() != 0:
@@ -320,7 +347,7 @@ def parse_object(b):
     while left > 0:
         c = parse_child(W)
         o['children'].append(c)
-        left -= c.get('slots', 1)   # a class-10 view counts its nested content as a child
+        left -= 1
     if otype == 0:
         buttons = [c for c in o['children'] if c['class'] == 6]
         if W.get(2) != [0, 0]:
@@ -354,8 +381,16 @@ def fmt_object(dk, i):
         if k == 3 and c.get('sub') == 1:
             lines.append(f"    bitmap {s(c['file'])!r}")
         elif k == 10:
-            lines.append(f"    scrollview id {c['id']} view {c['view_rect']} bar {c['scrollbar_rect']} "
-                         f"file {s(c['file'])!r}")
+            lines.append(f"    scrollbar id {c['id']} rect {c['rect']} target {c['target']} step {c['step']}")
+        elif k == 9:
+            lines.append(f"    scrolled content id {c['id']} rect {c['rect']} file {s(c['file'])!r}")
+        elif k == 14:
+            lines.append(f"    list controller id {c['id']} links {c['links']}")
+        elif k == 12:
+            lines.append(f"    edit field rect {c['rect']} cursor {s(c['cursor'])!r} style {c['style']:#x}")
+        elif k == 13:
+            lines.append(f"    list box rect {c['rect']} colours {c['colours']} source {c['source']!r} "
+                         f"face {c['face']!r} style {c['style']:#x}")
         elif k == 6:
             lines.append(f"    navbutton id {c['id']} rect {c['rect']} anim {s(c['anim'])!r}")
         else:
