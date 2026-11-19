@@ -28,7 +28,7 @@ target_include_directories(twtw_core PUBLIC src)
 target_link_libraries(twtw_core PUBLIC SDL3::SDL3)
 
 # The player.
-add_executable(twtw src/main.c src/platform/screen.c src/engine/ani_player.c)
+add_executable(twtw src/main.c src/viewer.c src/platform/screen.c src/engine/ani_player.c src/engine/game.c)
 target_link_libraries(twtw PRIVATE twtw_core)
 
 # Command-line tool for checks and dumps (no window).

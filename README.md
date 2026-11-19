@@ -2,7 +2,7 @@
 
 A reimplementation of the player for DK's *The Way Things Work* (Polish edition *Jak to działa?*, 1996) in C17 on SDL3. The port reads **your own copy** of the original CD (the ISO image or an extracted copy). No game data is included in this repository.
 
-Status: milestone 2 of [the plan](docs/ANALYSIS_PLAN.md) — all file formats readable in C, and a viewer that shows bitmaps and plays animations with sound. The file formats and the original's behaviour are documented in [`docs/`](docs).
+Status: milestone 3 of [the plan](docs/ANALYSIS_PLAN.md) — the game runs from the title through the Workshop to the articles: nav bar, hotspots, pop-ups, notes, "Patrz też", animations, sounds, Back. Not yet: the A–Z dial, the Index search screen, help scrolling and Options functions (milestones 4–5). The file formats and the original's behaviour are documented in [`docs/`](docs).
 
 ## Build
 
@@ -22,9 +22,13 @@ cmake --build build
 build/twtw "Jak To Działa.iso"
 ```
 
-`DATA` can be the `.iso` file or a directory with the extracted CD. An optional second argument picks the first item, e.g. `AIRP0M`, `AIRP0M1A` or `ARTICLE1/AIRP/AIRP0M.DIB`. Bitmaps and animations are listed together; an animation plays with its sound over its page bitmap, timed by the audio clock.
+`DATA` can be the `.iso` file or a directory with the extracted CD. Mouse as in the original; Backspace = back, Esc = stop sound/animation or close a pop-up, F11 = fullscreen.
 
-Keys: Left/Right previous/next, Page Up/Page Down ±20, Home/End, Space replay, F11 fullscreen, Esc quit.
+```bash
+build/twtw --viewer "Jak To Działa.iso" AIRP0M1A
+```
+
+opens the bitmap/animation browser instead (Left/Right, Page Up/Down, Home/End, Space replay). For testing, `--page N` starts the game at object `N` of TWTW.PNG, and `SDL_LOGGING=app=debug` logs page, pop-up and media changes.
 
 ## Checks
 
@@ -70,6 +74,8 @@ build/twtw-tool res-dump "Jak To Działa.iso" work/res_c
 
 writes the EXE's 41 UI bitmaps (byte-identical to `tools/ne_resources.py` output) and the hand cursor.
 
+`tools/port.sh` drives the game headless (Xvfb, dummy audio) for screen tests: `start [--page N]`, `click X Y`, `shot FILE.png`, `stop`.
+
 ## Layout
 
 | Path | Content |
@@ -77,8 +83,8 @@ writes the EXE's 41 UI bitmaps (byte-identical to `tools/ne_resources.py` output
 | `src/vfs/` | read-only file system over the ISO (own ISO 9660 reader) or a directory |
 | `src/formats/` | file format readers: DIB (RLE8, 1/4/8-bit), ANI, TWTW.PNG (DKMM), NE resources of TWTW.EXE |
 | `src/platform/` | the 640×480 indexed screen and its SDL texture |
-| `src/engine/` | the ANI player (audio clock as master) |
-| `src/main.c` | the SDL3 application (currently the bitmap/animation viewer) |
+| `src/engine/` | the game engine (`game.c`: pages, pop-ups, actions, media, nav) and the ANI player |
+| `src/main.c`, `src/viewer.c` | the SDL3 application: game mode and viewer mode |
 | `src/tool.c` | `twtw-tool`, headless checks and dumps |
 | `tools/` | Python reference readers and analysis scripts |
 | `docs/` | analysis, format specs, reverse-engineering notes |
