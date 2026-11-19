@@ -115,18 +115,18 @@ TWTW.EXE names the class numbers (an enum table at 1048:5770): 1 `Bitmap`, 2 `An
 Every child starts with `u16 class`. Most continue with the common **hotspot body**:
 
 ```
-u16 sub_or_name  u16 id  u16 shape  u16 x0 y0 x1 y1  u16 cursor_ref  u16 1 0 0  events  u16 0
+u16 sub_or_name  u16 id  u16 flags  u16 x0 y0 x1 y1  u16 cursor_ref  u16 1 0 0  events  u16 0
 events = u16 count, count × { u16 event, u16 nactions, actions }
 ```
 
 | class | body | meaning |
 |---|---|---|
 | 3, sub 1 | `0 0 0 0 file_ref` | **bitmap**: background picture of the object, an opaque rectangle |
-| 3, sub 2 | hotspot + `0 4` | **hotspot** (≈ 9 500): `shape` 4 = rectangle (5 and 1 also occur); usually cursor `Hand` |
+| 3, sub 2 | hotspot + `0 4` | **hotspot** (≈ 9 500): `flags` 4 almost everywhere, 5 on the film pages, 1 on the title and credits (see *Hotspot flags*); usually cursor `Hand` |
 | 3, sub = name | hotspot + `0 4` | named hotspot (title screen, full-screen click area) |
 | 4 | hotspot + `0 4 n` | A–Z dial region: `n` 0–23 = letter, 24/25 = left/right arrows (selection −1/+1, wrapping), 26 = OK. Verified in the original: entering the page selects A, not armed; choosing a letter or an arrow arms the dial, which only changes the OK button from red to yellow (the EXE's built-in `AZDial` control draws EXE bitmap 173/172 at page (334, 350); it also tries to show `azaz0m?a.dib`, which isn't on the CD); OK plays the selected letter's `azaz0m?a.ani` from the dial table, then opens the table's target. B → right → right → left → OK opens `AZ020M`. |
 | 5, sub 2 | hotspot | inert region, no events; one at the end of many pages |
-| 7, sub 2 | hotspot + `anim_ref 1 0 0 0 0 0 107` | **animation element**: plays `anim_ref` and fires event 6 when it ends. `shape` 36 = plays when the page opens and a click skips it (title, `QEMG1m0a`, verified); 20 and 4 = plays when clicked, then event 6 (Workshop objects, principles hub → principle page, timeline → period page; all verified); 4 is pre-loaded when the page opens |
+| 7, sub 2 | hotspot + `anim_ref 1 0 0 0 0 0 107` | **animation element**: plays `anim_ref` and fires event 6 when it ends. `flags` 36 (0x20 auto-play + 4) = plays when the page opens; 20 (0x10 rewind + 4) and 4 = plays when clicked, then event 6 (Workshop objects, principles hub → principle page, timeline → period page; all verified); 4 is pre-loaded when the page opens |
 | 2 | hotspot + `0 x0 y0 x1 y1 anim_ref cursor_ref 0 1 20 3 3 3 39 7 107` | **animation** element: an ANI file placed at the rectangle. Started by action 2 or by the object's open event. |
 | 6 | hotspot + `anim_ref 1 0 0 0 0 0 107` | **navigation button**: grow animation `nav\navb0mNa` |
 | 10 | fixed 29 words | **scroll bar** (`ScrollBar`): `id, x0 y0 x1 y1, cursor, ?, target_id, u32 min, u32 max, ?, ?, 8 × bitmap ref, 4 × step word, flag, u32 page` (32-bit values big-endian word pairs). Bitmaps from the EXE (`@` = EXE resource): LINEUP, LINEDOWN, THUMB, THUMBTRACK, then the pressed ALT set. Help bars: max 0 (taken from the content), page 1; Index bar: max 1308, page 10 (the list overrides both at run time). See `docs/re/TWTW_EXE.md`. |
@@ -148,9 +148,9 @@ events = u16 count, count × { u16 event, u16 nactions, actions }
 
 | type | payload (words) | count | meaning (provisional) |
 |---|---|---:|---|
-| 1 | `u32 object, u16` | 2095 | open object, **replacing** the current pop-up (verified: Options → "Historie z życia mamutów" closes `OPTI00` and opens `OPTI01`) |
+| 1 | `u32 object, u16` | 2095 | `OPENPAGE`: open the object in a **new window** (FUN_1018_b578 → FUN_1010_344a): nothing happens if it is already open, or if its template is single-instance and a window of that template is open. Used page → pop-up and pop-up → pop-up. The previous pop-up closes (observed: Options → "Historie z życia mamutów" closes `OPTI00`; the closing is not in OPENPAGE itself) |
 | 2 | `u16 element_id, u16 107` | 99 | (re)start the page's animation element with this id (all class-2 elements use id 0x565) |
-| 3 | `u32 object, u16 flag` | 6889 | open object: a type-1 target opens as a pop-up (zoom, glossary link, "Patrz też" entry), a type-2 target navigates to that page (verified: mammoth story item → page 990). The flag is 1 for glossary-to-glossary links. |
+| 3 | `u32 object, u16 flag` | 6889 | `CHANGEPAGE` (FUN_1028_2a42): show the object **in the open window of its template**: a type-2 target replaces the page in the base window (verified: mammoth story item → page 990); a type-1 target replaces the pop-up in place, keeping the window's position (pop-up → pop-up links always stay within one template; verified: glossary `Genr000g` → "Patrz też" → `Gcon000g` replaces it, and the help pages). The flag is 1 for glossary-to-glossary links. |
 | 4 | `str, -1, -1, 1, 1, 0, 1` | 294 | **play sound**: the name is always a `…s` WAV (e.g. `BALO0m0s`) |
 | 7 | `str anim, -1, -1, -1, 1, 0, 0, 1, 0, 0` | 440 | **play animation** in place; always an ANI, always the same parameters (e.g. `REFR0m0a` on the refrigerator page) |
 | 12 | `u16 n` | 3 | select option `n` (Options screen radio buttons) |
@@ -181,7 +181,7 @@ Checked against the running original with `tools/orig.sh` and pixel matching of 
 | pages at page-area origin (94, 4): Workshop, A–Z, principles, timeline, inventors, `QEMG1m`/`2m`, `TT050m` | exact |
 | pop-up at `(94, 4) + (x, y)` | **x exact, y + 8**: each pop-up is a small child window with an 8-pixel title strip (system-menu box). Its bitmap starts below the strip. Checked for Options (987), Index (812), `OPTI01` (988) and `BATT2z` (274). |
 | index entry "Akumulator samochodowy - bateria" → page 104 + pop-up 274 | exact |
-| action 1 replaces the pop-up, action 3 opens a pop-up or navigates, event 6 = animation end, links = context navigation | as described above |
+| action 1 opens a window, action 3 changes the page in place, event 6 = animation end, links = context navigation | as described above |
 
 Pop-ups therefore need an 8-px title strip in the port, or the bitmap must be drawn at `y + 8`. A black line is drawn under the strip, over the bitmap's first row. They also cast a 4-px drop shadow to the right and below: black on every other pixel of a checkerboard (black where x + y is even), with the image beneath showing through the rest. Wine paints the in-between pixels white, which real Windows doesn't (confirmed from memory of the original on Windows); the port follows Windows.
 
@@ -189,11 +189,14 @@ Pop-ups therefore need an 8-px title strip in the port, or the bitmap must be dr
 
 - Load the pool, the object table and the index table at startup, and parse records lazily, as the original does. The C parser follows `tools/dkmm.py` one-to-one.
 - Rendering a page is: background bitmap at the page origin (94, 4), then any pop-ups (type 1): an 8-px title strip at `origin + (x, y)` and the bitmap below it. Hotspots are rectangles in the object's local coordinates. Animations play at their element rectangle.
-- **Index screen (812)**, verified in the original: typing does an incremental, case-insensitive search. The list selects (yellow) the **first entry whose sort key is ≥ the typed text** and scrolls just enough to show it on the last visible row ("z" → "Zakład Tłoczniczy w Dover", "zeg" → "Zegar", "ż" → "Żagiel - łódź żaglowa", "qx" → "Radar"). The index table is already sorted under this key (0 inversions in 1320 entries): lower-case the text, order letters by the Polish alphabet `a ą b c ć d e ę f g h i j k l ł m n ń o ó p q r s ś t u v w x y z ź ż`, and put other characters (space, `-`, `,`, digits) before letters by code point. Enter = OK, which opens the entry's page and pop-ups. List rows are 12 px apart.
+- **Index screen (812)**, verified in the original: typing does an incremental, case-insensitive search. The list selects (yellow) the **first entry whose sort key is ≥ the typed text** and scrolls just enough to show it (on the last visible row when it moved down); an empty field selects the first entry (verified). The controller searches on every edit (FUN_1050_8bda case 1 → FUN_1050_1c42 → the data source's find callback) ("z" → "Zakład Tłoczniczy w Dover", "zeg" → "Zegar", "ż" → "Żagiel - łódź żaglowa", "qx" → "Radar"). The index table is already sorted under this key (0 inversions in 1320 entries): lower-case the text, order letters by the Polish alphabet `a ą b c ć d e ę f g h i j k l ł m n ń o ó p q r s ś t u v w x y z ź ż`, and put other characters (space, `-`, `,`, digits) before letters by code point. Enter = OK, which opens the entry's page and pop-ups. List rows are 12 px apart.
 - **Media and clicks**, verified with `waveOut` relay traces in the original:
-  - While a sound (action 4) or an animation started by a click (action 7, class 2/7 clicked) is playing, **any click (hotspot, other media, nav button) only stops it**; the clicked action is not run. Stopping an animation rewinds it. When nothing is playing, a click starts its media, so a second click on the same hotspot toggles it off. A page change stops the sound. At most one sound or animation plays at a time.
-  - A click during an **auto-play animation** (class 7, shape 36: the title intro and credits, the `QEMG1m` film) **skips** it: the animation stops and its event 6 fires, so one click moves on (title → `TITL1m`, credits → Workshop, film → `QEMG2m`).
+  - **Hotspot flags** (the hotspot word at +0x1e in the EXE; FUN_1010_6f0a for hotspots, FUN_1010_6420 for animation elements and nav buttons): every hotspot of the clicked window gets the click before the hit test. One with **flag 4** stops all playing media (FUN_1010_bd50). If that stopped anything, the hotspot under the pointer still runs its action only with **flag 1**; otherwise the click is swallowed. Flag 0x10 rewinds the element's animation, 0x40 stops it when it ends, 0x20 plays it when the page opens.
+  - So while a sound or a clicked animation plays, a click on an ordinary (flag 4) hotspot only stops it (verified with traces). Stopping never fires event 6.
+  - **Auto-play "skip"** is done by the data, not by the engine: the film pages (990–1011) cover the screen with flag-5 hotspots whose click repeats the animation's finish target (film area) or returns to the principle page (frame); the title and credits (1586, 1587) have one full-screen flag-1 hotspot with the finish target and no flag-4 hotspot, so the click goes through and the page change stops the animation. Verified in the original: a click on the frame of `QEMG1m` goes to `QEMG0m` (page 101), not to `QEMG2m`.
+  - When nothing is playing, a click starts its media, so a second click on the same hotspot toggles it off. A page change stops the sound. At most one sound or animation plays at a time.
   - **There is no idle animation loop.** The Workshop and the principles hub played nothing in 45 s / 26 s untouched (no ANI file opened). An earlier reading of a screen recording as "idle animations" was a false match. Pages pre-open some of their WAV and ANI files when loaded.
 - **Back (Wróć)** is a page history stack (verified: `AZ020M` → A–Z → Workshop; at the bottom it stays put).
+- **Nav buttons → functions:** the template trailer pairs ids `0BEA 0BEB 0BEC 0BED 0BEE 0BEF 0BE1 0BF1 0BF0` with targets `984 985 253 776 986 987 988 812 676`, but pairing them by position contradicts four buttons (verified by clicking each). The nav click fires an event to listeners registered per sender id (FUN_1010_8c90 → FUN_1010_993e); where the template registers them is not traced. The port maps by position as observed.
 - **Cursors:** only `Hand` (9716 elements, EXE cursor resource 107, hotspot (6, 0)) and `normal` (156, the system arrow) occur; the Index text field uses an I-beam.
 - Still open: the meaning of the constant action 4/7 parameters (-1 fields: probably position/loop defaults).

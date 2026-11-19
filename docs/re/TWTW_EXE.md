@@ -103,6 +103,15 @@ The child factory FUN_1048_3dc2 maps class numbers to C++ constructors (the numb
 
 Verified against the original's help screenshots: positions 0–3 and a track click from 3 (to 2) are pixel-identical apart from Wine's window frame.
 
+## Events and actions
+
+FUN_1048_4314 fills the enum globals from the name table: actions 1–14 at 1060:001e–0038, events 1–11 at 1060:003c–0050, object classes at 1060:000c and 0054–0074. Each action type is its own class whose constructor tags it with its enum value (e.g. OPENPAGE 1018:b2a8, CHANGEPAGE 1028:2624, PLAYWAVE 1020:e318, BACKPAGE 1050:6b17, TWTWOPTION 1050:011d, Closepage 1028:091c); slot 11 (+0x2c) executes it.
+
+- Firing an event (FUN_1010_81d2) runs the sender's own actions for that event (FUN_1010_807a) and calls the listeners registered for the event type with the sender's id (FUN_1010_8c90 → FUN_1010_993e).
+- Hotspot click: FUN_1010_6f0a (class 3) and FUN_1010_6420 (classes 6 and 7). The hotspot flags word (+0x1e) is tested with `flags & mask` (FUN_1048_0aa2): 4 = stop all media (FUN_1010_bd50 walks the playing-media list), 1 = act even after stopping media, 0x10 = rewind, 0x40 = stop at end, 0x20 = auto-play. Animation end: FUN_1010_66cc fires `on_finish` (event 6).
+- OPENPAGE (FUN_1010_344a): no-op if the target is open; for single-instance templates (+0x96 of the template record) no-op if a window of that template is open; else a new window (FUN_1010_3640).
+- CHANGEPAGE (FUN_1028_2a42): finds the open window whose template matches the target's and replaces its page in place (MoveWindow keeps it on screen); an error box if there is none. Both page actions look up a per-target kind (FUN_1008_7e8a) and, for kinds 0x11/0x12, play an animation or a sound named in a table at DGROUP:0x150 first (not seen in the data's use so far; not ported).
+
 ## Options screen functions
 
 - **Kopiuj aktywne okno** (copy active window), 1028:76D2: captures the current view and puts it on the clipboard as a bitmap and a palette. On Windows 3.x it also adds a DIB (format 8). The port can use `SDL_SetClipboardData` with a BMP/PNG of the 640×480 frame.
@@ -111,5 +120,5 @@ Verified against the original's help screenshots: positions 0–3 and a track cl
 ## Behaviour notes from the runtime sessions
 
 - A click on a page hotspot outside an open pop-up first closes the pop-up (in one frame), then runs the hotspot's action.
-- A click during the title's auto-play animations skips them (stop + event 6); see docs/formats/dkmm.md for the full click rules. (An earlier note here claimed the title ignored clicks and the Workshop looped idle animations; both were wrong.)
+- A click on the title moves on through its full-screen flag-1 hotspot, not by "skipping" the animation (stopping never fires event 6); see docs/formats/dkmm.md for the click rules. (Earlier notes claimed the title ignored clicks, the Workshop looped idle animations, and a click skipped auto-play with event 6; all three were wrong.)
 - There is no idle animation loop on the hub pages (verified with traces).

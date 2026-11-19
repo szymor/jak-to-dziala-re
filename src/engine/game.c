@@ -57,7 +57,6 @@ typedef struct Media {
     int end;                   /* what happens when it finishes */
     int end_obj, end_child, end_nav;
     uint32_t end_target;       /* END_OPEN: object to open afterwards */
-    int skippable;             /* auto-play: a click finishes it (stop + event 6) instead of only stopping */
 } Media;
 
 struct Game {
@@ -596,7 +595,6 @@ static void media_stop(Game *g)
     }
     g->media.kind = 0;
     g->media.end = END_NONE;
-    g->media.skippable = 0;
 }
 
 static int media_ani(Game *g, const char *path, int ox, int oy)
@@ -647,7 +645,8 @@ static int media_wav(Game *g, const char *path)
 static void run_events(Game *g, int obj, const DkEvent *ev, int n, uint16_t which);
 static void options_function(Game *g, int n);
 static void idx_ok(Game *g);
-static void open_object(Game *g, uint32_t target, int replace_popup);
+enum { OPEN_NEW, OPEN_REPLACE_TOP, OPEN_IN_PLACE };
+static void open_object(Game *g, uint32_t target, int mode);
 
 static void set_page_layout(Game *g, const DkObject *o)
 {
@@ -683,7 +682,6 @@ static void enter_page(Game *g, int target)
                 g->media.end = END_EVENT6;
                 g->media.end_obj = target;
                 g->media.end_child = k;
-                g->media.skippable = 1;
             }
             break;
         }
@@ -710,8 +708,14 @@ static void go_back(Game *g)
         enter_page(g, g->history[--g->nhistory]);
 }
 
-static void open_object(Game *g, uint32_t target, int replace_popup)
+/* OPEN_NEW: a new pop-up on top. OPEN_REPLACE_TOP: action 1 (OPENPAGE) from a pop-up - the
+ * original opens a new window and the old one closes (observed: Options -> mammoth stories).
+ * OPEN_IN_PLACE: action 3 (CHANGEPAGE, FUN_1028_2a42) - the page changes inside the open window
+ * of the target's template (pop-up -> pop-up links always stay within one template), which keeps
+ * its position (verified on the help pages). */
+static void open_object(Game *g, uint32_t target, int mode)
 {
+    int replace_popup = mode != OPEN_NEW;
     DkObject *o = object(g, (int)target);
     if (!o)
         return;
@@ -723,7 +727,7 @@ static void open_object(Game *g, uint32_t target, int replace_popup)
     /* Help pages share one window (verified): a pop-up of the same non-default template as the
      * top pop-up takes its place and position, whatever position it declares. */
     int keep_x = 0, keep_y = 0, keep = 0;
-    if (g->npopups && o->tmpl) {
+    if (g->npopups && (o->tmpl || mode == OPEN_IN_PLACE)) {
         DkObject *topo = object(g, g->popups[g->npopups - 1]);
         if (topo && topo->tmpl == o->tmpl) {
             keep = 1;
@@ -800,8 +804,8 @@ static void run_action(Game *g, int obj, const DkAction *a)
     char path[256];
     int ox, oy;
     switch (a->type) {
-    case 1: open_object(g, arg32(a), 1); break;                     /* open, replacing the top pop-up */
-    case 3: open_object(g, arg32(a), 0); break;                     /* open pop-up / go to page */
+    case 1: open_object(g, arg32(a), OPEN_REPLACE_TOP); break;      /* OPENPAGE */
+    case 3: open_object(g, arg32(a), OPEN_IN_PLACE); break;         /* CHANGEPAGE: page, or pop-up in place */
     case 2:                                                         /* (re)start animation element */
         for (int k = 0; k < o->nchild; k++)
             if (o->children[k].cls == 2 && o->children[k].id == a->args[0]) {
@@ -888,12 +892,9 @@ static void idx_show(Game *g, const DkObject *o)
 /* Verified in the original: the selection is the first entry whose Polish sort key is >= the text. */
 static void idx_search(Game *g, const DkObject *o)
 {
+    /* the list controller searches on every edit (FUN_1050_8bda case 1), the empty text too:
+     * that selects the first entry and scrolls to the top (verified in the original) */
     size_t tl = strlen(g->idx_text);
-    if (!tl) {
-        g->idx_sel = -1;
-        g->dirty = 1;
-        return;
-    }
     int lo = 0, hi = idx_count(g);
     while (lo < hi) {
         int mid = (lo + hi) / 2;
@@ -1225,19 +1226,60 @@ static int nav_button_at(Game *g, int x, int y)
 }
 
 
+/* Hotspot flags (the record's 'shape' word, +0x1e in the EXE's hotspot object): */
+enum {
+    HS_CLICK_THROUGH = 0x01,   /* acts even when its click stopped media (FUN_1010_6f0a) */
+    HS_STOPS_MEDIA = 0x04,     /* a click in its window stops all playing media (FUN_1010_bd50) */
+    HS_REWIND = 0x10,          /* rewinds its animation when stopped / finished */
+    HS_AUTOPLAY = 0x20,        /* class 7: plays when the object opens */
+};
+
+/* The window (object) a click at (x, y) is delivered to, and the hotspot hit in it (-1 none). */
+static int click_target(Game *g, int x, int y, int *k)
+{
+    *k = -1;
+    if (g->npopups) {
+        int top = g->popups[g->npopups - 1];
+        DkObject *o = object(g, top);
+        if (o && in_rect(popup_rect(g, o), x, y)) {
+            *k = hotspot_at(g, top, x, y);
+            return top;
+        }
+        return -1;                       /* outside the pop-up: it closes; nothing else gets the click */
+    }
+    if (in_rect(g->page_rect, x, y)) {
+        *k = hotspot_at(g, g->page, x, y);
+        return g->page;
+    }
+    return -1;
+}
+
 void game_click(Game *g, int x, int y)
 {
     g->mouse_x = x;
     g->mouse_y = y;
     if (g->media.kind) {
-        /* Verified in the original: a click during an auto-play animation (title, film) skips it -
-         * it stops and its event 6 fires; a click during media started by a click only stops it. */
-        if (g->media.skippable)
-            media_finished(g);
-        else
-            media_stop(g);
+        /* TWTW.EXE (FUN_1010_6f0a / FUN_1010_6420): every hotspot of the clicked window gets the
+         * click; one with flag 4 stops all media. If media was stopped, the hotspot under the
+         * pointer still acts only with flag 1. Stopping never fires event 6: auto-play pages
+         * "skip" through flag-1 hotspots whose click repeats the finish target (verified in the
+         * original: a click on a film's frame goes to the frame's target, not the film's).
+         * The title and credits have no flag-4 hotspot: the click goes through and the page
+         * change stops the animation. Nav buttons: stop only (verified). */
+        int k, obj = click_target(g, x, y, &k);
+        DkObject *o = obj >= 0 ? object(g, obj) : NULL;
+        int stops = obj < 0;             /* nav panel / outside a pop-up: stop (verified) */
+        for (int i = 0; o && i < o->nchild && !stops; i++)
+            if (o->children[i].kind == DK_CHILD_HOTSPOT && (o->children[i].shape & HS_STOPS_MEDIA))
+                stops = 1;
+        if (!stops)
+            goto deliver;
+        media_stop(g);
+        if (o && k >= 0 && (o->children[k].shape & HS_CLICK_THROUGH) && obj == click_target(g, x, y, &k))
+            click_child(g, obj, k);
         return;
     }
+deliver:
     if (g->npopups) {
         int top = g->popups[g->npopups - 1];
         DkObject *o = object(g, top);

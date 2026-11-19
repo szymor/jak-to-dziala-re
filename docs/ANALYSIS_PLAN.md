@@ -46,10 +46,10 @@ Decisions, updated with what the analysis showed:
 
 - **Screen:** a 640×480 logical surface. Page area at (94, 4), nav template at (0, 0), frame strips as decoded. Scale to the window with `SDL_SetRenderLogicalPresentation`.
 - **Pixels:** keep an 8-bit indexed framebuffer with the single global palette, converted to an RGBA texture on change. It's faithful and simple, and needs no palette animation (the palette fades are unused).
-- **Pop-ups:** a stack of panels. Each pop-up has an 8-px title strip above its bitmap (the original used tiny child windows). Action 1 replaces the top pop-up, action 3 pushes a pop-up or navigates, a click outside closes it, and action 13 closes it.
+- **Pop-ups:** a stack of panels. Each pop-up has an 8-px title strip above its bitmap (the original used tiny child windows). Action 1 opens a new pop-up (the previous one closes), action 3 changes the page in place (the base window, or the pop-up of the same template), a click outside closes it, and action 13 closes it.
 - **Transitions:** none (the original shows none). Optional later; the 19 effects are documented.
 - **Animation and sound sync:** the audio clock is the master. The ANI's PCM goes into an `SDL_AudioStream`, and the displayed frame is `floor(played_samples × fps / rate)`, corrected for the device latency SDL reports. Frames are never dropped on a modern machine. See the note below on frame rate.
-- **Sound effects:** WAV through an `SDL_AudioStream`. One medium (sound or animation) at a time; while one plays, a click only stops it (verified), so no mixing is needed.
+- **Sound effects:** WAV through an `SDL_AudioStream`. One medium (sound or animation) at a time; while one plays, a click on an ordinary hotspot only stops it (the hotspot flags decide; see docs/formats/dkmm.md), so no mixing is needed.
 - **Text:** only the Index screen draws text at runtime (list box + edit field, style `Times New Roman CE`, plus the colours from the template section). We can't ship that font, so use **SDL3_ttf** with a metric-compatible free serif (Liberation Serif or TeX Gyre Termes), letting the user point to their own TNR.
 - **EXE resources:** load the UI bitmaps and the hand cursor from the user's `TWTW.EXE` (`ne_res.c`), so no assets are shipped. The other cursor is the system arrow (`SDL_CreateColorCursor` / `SDL_SYSTEM_CURSOR_DEFAULT`).
 - **Options:** "copy window" → `SDL_SetClipboardData` with a BMP/PNG of the frame. Print → "save page as PNG" (and the system print dialog only if it's ever wanted).
