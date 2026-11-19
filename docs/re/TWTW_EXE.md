@@ -72,7 +72,7 @@ The type is a **property of the panel** (panel object +0x60, with a "pending" fl
 
 The data segment at 10B8:014F holds the engine's resource file-extension table, in order: `.wav .pag .png .ani .pan .pin .mic .sbm .pbk .txt .dib .trs .avi`, followed by the default cursor names `Arrow` and `Hand`. The text page writer's formatting strings (`{\r\n`, `\t}\r\n`, tabs) sit just before it. Only `.png` (the compiled page file), `.ani`, `.wav` and `.dib` occur on this CD. The rest (panels, sprite bitmaps `.sbm`, text, transition files `.trs`, AVI) belong to the authoring setup or other titles built on the engine. The index in this table is probably the resource-type code used by actions (to confirm).
 
-## Open items for the next Phase 3 pass
+## Status
 
 Phase 3 is closed for the port's needs. Not traced (not needed): the action dispatcher code (reached through C++ virtual calls), the ANI tick source, the transparent-flag and key source, and the template field → transition mapping.
 
