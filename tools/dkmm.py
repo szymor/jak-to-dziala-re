@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """Reader for DKCODE/TWTW.PNG, the compiled ("scrunged") DKMM page file.
-See docs/formats/dkmm.md for the layout. Work in progress: the container,
-the object table, object headers and the common child classes are decoded;
-some rare child classes are not yet (they are reported, not guessed).
+See docs/formats/dkmm.md for the layout. All object records but one (the
+Index screen's list box) and the index table decode exactly; the template
+section of the directory block is not decoded yet. Undecoded parts are
+reported, not guessed.
 
 Usage:
   python3 -I tools/dkmm.py summary work/cd/DKCODE/TWTW.PNG
   python3 -I tools/dkmm.py object  work/cd/DKCODE/TWTW.PNG INDEX [INDEX...]
   python3 -I tools/dkmm.py dump    work/cd/DKCODE/TWTW.PNG OUT.txt
+  python3 -I tools/dkmm.py index   work/cd/DKCODE/TWTW.PNG
 """
 import collections
 import struct
@@ -58,13 +60,41 @@ class Dkmm:
         """String references are 1-based; 0 means no string."""
         return self.strings[ref - 1] if 0 < ref <= len(self.strings) else None
 
+    def parse_index(self, o):
+        """Index table: u16 n, n x {u16 strref, u16 strlen, u32 0, u16 page, u16 k, k x u32 popup}."""
+        d = self.d
+        n = be16(d, o)
+        o += 2
+        out = []
+        for _ in range(n):
+            ref, ln, z, page, k = struct.unpack_from('>HHIHH', d, o)
+            o += 12
+            text = self.string(ref)
+            if z or text is None or len(text) != ln:
+                return None, o
+            out.append({'text': text, 'page': page, 'popups': list(struct.unpack_from(f'>{k}I', d, o))})
+            o += 4 * k
+        return out, o
+
+    def find_index(self):
+        """The index table is the tail of the directory block; the templates before it are
+        not decoded yet, so locate the table by requiring an exact parse up to the block end."""
+        for o in range(self.dir_off, self.dir_end - 2):
+            try:
+                idx, end = self.parse_index(o)
+            except struct.error:
+                continue
+            if idx and end == self.dir_end:
+                return o, idx
+        raise ValueError('index table not found')
+
     def object_bytes(self, i):
         return self.d[self.obj_base + self.obj_off[i]:self.obj_end[i]]
 
 
 # ---------------------------------------------------------------- objects
 
-ACTION_WORDS = {1: 3, 2: 2, 3: 3, 4: 7, 7: 10, 12: 1}   # payload words after the type word
+ACTION_WORDS = {1: 3, 2: 2, 3: 3, 4: 7, 7: 10, 12: 1, 13: 2}   # payload words after the type word
 
 
 class ParseError(Exception):
@@ -101,73 +131,154 @@ def parse_hotspot(W):
     h['rect'] = W.get(4)
     h['cursor'] = W.get()
     h['flags'] = W.get(3)
-    h['events'] = []
-    for _ in range(W.get()):
-        ev = W.get()
-        h['events'].append({'event': ev, 'actions': parse_actions(W, W.get())})
+    h['events'] = parse_events(W)
     return h
 
 
 def parse_child(W):
     cls = W.get()
+    if cls == 10:                              # scrolling bitmap view (help pages)
+        t = W.get(45)
+        return {'class': 10, 'slots': 2, 'id': t[0], 'scrollbar_rect': t[1:5], 'cursor': t[5], 'name': t[7],
+                'scrollbar_bitmaps': t[14:22], 'view_rect': t[31:35], 'file': t[44], 'raw': t}
     sub = W.get()
     c = {'class': cls, 'sub': sub}
-    if cls == 3 and sub == 1:                  # bitmap
+    if cls == 6:                               # navigation button: hotspot + button animation
+        t = W.get(20)
+        c.update(id=sub, rect=t[2:6], cursor=t[6], anim=t[12], raw=t)
+    elif cls == 3 and sub == 1:                  # bitmap
         c['unk'] = W.get(4)
         c['file'] = W.get()
-    elif cls == 3 and sub == 2:                # hotspot
+    elif cls == 2:                             # animation: hotspot + playback fields
         c.update(parse_hotspot(W))
-        c['tail'] = W.get(3)
-    elif cls == 5 and sub == 2:                # hotspot without region (see doc)
+        if W.get() != 0:
+            raise ParseError('hotspot terminator')
+        t = W.get(16)
+        c['anim'] = {'rect': t[1:5], 'file': t[5], 'cursor': t[6], 'params': t[7:]}
+        c['tail'] = [t[0]]
+    elif cls in (15, 16):                      # bitmap button (OK / Cancel): hotspot + images
         c.update(parse_hotspot(W))
-        c['tail'] = W.get(2)
-    elif cls == 7 and sub == 2:                # hotspot with extra media fields
-        c.update(parse_hotspot(W))
-        c['tail'] = W.get(10)
+        if W.get() != 0:
+            raise ParseError('hotspot terminator')
+        t = W.get({15: 8, 16: 5}[cls])
+        c.update(images=t[:2], tail=t[2:])
+    elif cls in (3, 4, 5, 7) and (sub == 2 or cls in (3, 4)):   # hotspot variants
+        c.update(parse_hotspot(W))           # (sub is 2, or a name id on a few singletons)
+        if W.get() != 0:
+            raise ParseError('hotspot terminator')
+        c['tail'] = W.get({3: 2, 4: 3, 5: 0, 7: 8}[cls])
     else:
         raise ParseError(f'child class {cls} sub {sub} not decoded yet')
     return c
 
 
+def parse_events(W):
+    out = []
+    for _ in range(W.get()):
+        ev = W.get()
+        out.append({'event': ev, 'actions': parse_actions(W, W.get())})
+    return out
+
+
+def parse_trailer(W):
+    """nEvents, events, 0, nTable, table, nLinks, links (see doc)."""
+    events = parse_events(W)
+    if W.get() != 0:
+        raise ParseError('trailer: expected 0')
+    n = W.get()
+    table = {}
+    if n:                                      # A-Z dial: targets and letter animations
+        targets = [(W.get() << 16) | W.get() for _ in range(n)]
+        anims = W.get(n)
+        table = {'targets': targets, 'anims': anims, 'extra': W.get()}
+    links = [tuple(struct.unpack('>4I', struct.pack('>8H', *W.get(8)))) for _ in range(W.get())]
+    if W.p != len(W.w):
+        raise ParseError(f'{len(W.w) - W.p} words left after trailer')
+    return events, links, table
+
+
 def parse_object(b):
     W = Words(b)
-    h = W.get(18)
-    o = {'type': h[0], 'w1': h[1], 'pos': (h[2], h[3]), 'dir': h[4], 'w5': h[5],
-         'w6_8': h[6:9], 'nchildren': h[9], 'w10_11': h[10:12], 'id': h[12],
-         'size': (h[16], h[17]), 'children': []}
-    if h[6:9] != [1, 1, 1]:
-        raise ParseError('irregular header')
-    for _ in range(o['nchildren']):
-        o['children'].append(parse_child(W))
-    o['trailer'] = W.w[W.p:]
+    otype = W.get()
+    if otype == 0:                             # template / frame: short header
+        o = {'type': 0, 'name': W.get(), 'pos': (0, 0), 'dir': 0, 'w1': None}
+    else:
+        h = W.get(8)
+        o = {'type': otype, 'w1': h[0], 'pos': (h[1], h[2]), 'dir': h[3], 'w5': h[4], 'w6_8': h[5:8]}
+        if h[5] != 1 or h[6] not in (1, 2):
+            raise ParseError(f'irregular header {h[5:8]}')
+    core = W.get(9)                            # nchildren, 1, 2, id, 0, 0, 0, width, height
+    if core[1:3] != [1, 2] or core[4:7] != [0, 0, 0]:
+        raise ParseError(f'irregular header core {core}')
+    o.update(nchildren=core[0], id=core[3], size=(core[7], core[8]), children=[])
+    left = o['nchildren']
+    while left > 0:
+        c = parse_child(W)
+        o['children'].append(c)
+        left -= c.get('slots', 1)   # a class-10 view counts its nested content as a child
+    if otype == 0:
+        buttons = [c for c in o['children'] if c['class'] == 6]
+        if W.get(2) != [0, 0]:
+            raise ParseError('template trailer')
+        ids = W.get(len(buttons))
+        targets = [(W.get() << 16) | W.get() for _ in buttons]
+        o['events'], o['links'], o['table'] = [], list(zip(ids, targets)), {}
+        if W.p != len(W.w):
+            raise ParseError(f'{len(W.w) - W.p} words left after template trailer')
+    else:
+        o['events'], o['links'], o['table'] = parse_trailer(W)
     return o
 
 
 def fmt_object(dk, i):
     b = dk.object_bytes(i)
-    lines = []
     try:
         o = parse_object(b)
     except ParseError as e:
         return f'#{i} offset {dk.obj_base + dk.obj_off[i]:#x} len {len(b)}: not decoded ({e})'
     s = dk.string
-    lines.append(f"#{i} type {o['type']} pos {o['pos']} size {o['size']} id {o['id']} "
-                 f"dir {s(o['dir'])!r} w1 {o['w1']}")
+
+    def ev(evl):
+        return '; '.join(f"ev{e['event']}: " + ', '.join(f"a{a['type']}{a['args']}" for a in e['actions'])
+                         for e in evl)
+
+    lines = [f"#{i} type {o['type']} pos {o['pos']} size {o['size']} id {o['id']} "
+             f"dir {s(o['dir'])!r} template {o.get('w1')}"]
     for c in o['children']:
-        if 'file' in c:
-            lines.append(f"    bitmap {s(c['file'])!r} unk {c['unk']}")
+        k = c['class']
+        if k == 3 and c.get('sub') == 1:
+            lines.append(f"    bitmap {s(c['file'])!r}")
+        elif k == 10:
+            lines.append(f"    scrollview id {c['id']} view {c['view_rect']} bar {c['scrollbar_rect']} "
+                         f"file {s(c['file'])!r}")
+        elif k == 6:
+            lines.append(f"    navbutton id {c['id']} rect {c['rect']} anim {s(c['anim'])!r}")
         else:
-            ev = '; '.join(f"ev{e['event']}: " + ', '.join(f"a{a['type']}{a['args']}" for a in e['actions'])
-                           for e in c['events'])
-            lines.append(f"    class{c['class']} hotspot id {c['id']} shape {c['shape']} rect {c['rect']} "
-                         f"cursor {s(c['cursor'])!r} flags {c['flags']} [{ev}] tail {c['tail']}")
-    lines.append(f"    trailer {o['trailer']}")
+            extra = ''
+            if 'anim' in c:
+                extra = f" anim {s(c['anim']['file'])!r} at {c['anim']['rect']} params {c['anim']['params']}"
+            if 'images' in c:
+                extra = f" images {[s(x) for x in c['images']]}"
+            lines.append(f"    class{k} hotspot id {c['id']} shape {c['shape']} rect {c['rect']} "
+                         f"cursor {s(c['cursor'])!r} [{ev(c['events'])}] tail {c.get('tail')}{extra}")
+    if o['events']:
+        lines.append(f"    object events [{ev(o['events'])}]")
+    if o['links']:
+        lines.append(f"    links {o['links']}")
+    if o['table']:
+        lines.append(f"    dial targets {o['table']['targets']}")
     return '\n'.join(lines)
 
 
 def main(argv):
     cmd, path = argv[0], argv[1]
     dk = Dkmm(open(path, 'rb').read())
+    if cmd == 'index':
+        off, idx = dk.find_index()
+        print(f'# index table at {off:#x}, {len(idx)} entries: text, page object, popup objects')
+        for e in idx:
+            print(f"{e['text']}\t{e['page']}\t{' '.join(map(str, e['popups']))}")
+        return
     if cmd == 'summary':
         print('header', dk.header, 'tag', dk.tag)
         print(f'strings {len(dk.strings)} at {dk.pool_off:#x}; directory block {dk.dir_off:#x}..{dk.dir_end:#x}; '

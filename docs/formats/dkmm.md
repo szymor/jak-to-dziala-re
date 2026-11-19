@@ -1,89 +1,142 @@
 # TWTW.PNG: compiled DKMM page file
 
-Status: **container solved; object grammar about 87% decoded.** `tools/dkmm.py` reads it:
+Status: **1667 of 1668 object records and the index table decode exactly**: every byte of each record is consumed. The template section at the start of the directory block (about 1 KB) and one singleton object (the Index screen's list box) are still open. Field names are inferred from the data and checked against it. The meanings of some constants are not confirmed yet.
 
 ```bash
 python3 -I tools/dkmm.py summary work/cd/DKCODE/TWTW.PNG
 ```
 
 ```bash
-python3 -I tools/dkmm.py object work/cd/DKCODE/TWTW.PNG 2 3
+python3 -I tools/dkmm.py object work/cd/DKCODE/TWTW.PNG 2 989
 ```
 
-The EXE calls this file the *Scrunge File*. The authoring tool compiled ("scrunged") text page and template definitions into it. The text form is still parseable by the EXE's script parser, but isn't on the CD. All integers are **big-endian**.
+```bash
+python3 -I tools/dkmm.py dump work/cd/DKCODE/TWTW.PNG work/dkmm/objects.txt
+```
+
+```bash
+python3 -I tools/dkmm.py index work/cd/DKCODE/TWTW.PNG
+```
+
+The EXE calls this file the *Scrunge File*: the authoring tool compiled ("scrunged") text page and template definitions into it. All integers are **big-endian**.
 
 ## Layout
 
 | Offset | Content |
 |---|---|
-| 0x00 | 6 × `str`: `DKMM` (product code), `11` (country code), `Windows` (platform), `PP`, `PO`, `Jak to działa?` (title). `str` = u16 length + CP1250 bytes. The product/country check messages are EXE strings 1250–1257. |
+| 0x00 | 6 × `str`: `DKMM` (product), `11` (country), `Windows`, `PP`, `PO`, `Jak to działa?`. `str` = u16 length + CP1250 bytes. |
 | 0x2b | u16 0, u16 1, char[2] `OF` |
-| 0x31 | u32 `pool_size` (0xE1C1): byte size of the string pool, counted from 0x39 |
-| 0x35 | u32 `objtab_off` (0x13532): offset of the object table |
-| 0x39 | **string pool**: u16 count (3813), then count × `str` |
-| 0xE1FA | **directory block**, 0x5338 bytes, up to `objtab_off`. Not decoded yet. Probably the page list, templates and global settings; it starts with `00 01 02 80 01 E0` (version 1, 640×480). |
-| 0x13532 | **object table**: u32 `N` (1668), then N × u32 offsets, relative to `obj_base` = end of this table (0x14F46) |
-| 0x14F46 | N object records, packed back to back to the end of the file. The offsets are unique, so each record's length is known exactly. |
+| 0x31 | u32 `pool_size` (0xE1C1), counted from 0x39 |
+| 0x35 | u32 `objtab_off` (0x13532) |
+| 0x39 | **string pool**: u16 count (3813), count × `str` |
+| 0xE1FA | **directory block** up to `objtab_off`: the template section (0xE1FA–0xE5C0), then the index table (0xE5C0–0x13532) |
+| 0x13532 | **object table**: u32 N (1668), N × u32 offsets relative to `obj_base` = end of the table (0x14F46) |
+| 0x14F46 | N object records, packed back to back to the end of the file |
 
-At startup the original reads exactly this: seek to 0x39, `_hread` of `pool_size`, then the directory block, then the object table (verified with a Wine relay trace of `KERNEL._HREAD/_LLSEEK`). Object records are read later, on demand.
+At startup the original reads the pool, the directory block and the object table, and reads records on demand (Wine relay trace).
 
-### String references
+**References.** String refs are u16, **1-based**, with 0 meaning none. Object refs are the **0-based index into the object table**, stored as u32 in actions and links. Separately, each object and element has a u16 *id*, a third number space used for named elements.
 
-Records point into the pool with u16 indices that are **1-based**; 0 means no string. Pool strings are interned, so one entry such as `Hand` (cursor name) or `\ARTICLE1\AIRC\` (directory) is shared by many records.
+## Index table
 
-### Object references
+`u16 n` (1320), then n entries:
 
-Actions refer to other objects by their **0-based index in the object table**. Checked: glossary entry `Ghea000g` (heat) links to object 471 (`Gtem000g`, temperature), `Gwei000g` (weight) to 614 (`Ggra000g`, gravity), and `Gden000g` (density) to 594 (`Gmas000g`, mass). The AIRC "Patrz też" panel links to objects 0 (REFR, refrigerator) and 1 (COOL, cooling).
+```
+u16 text_ref   u16 strlen(text)   u32 0   u16 page   u16 k   k × u32 popup
+```
+
+`page` is the object index of the article's main page, and the pop-ups are opened on top of it. Examples: `Akumulator samochodowy - bateria` → page 104 (`BATT0m`) with pop-up 274 (`BATT2z`). `Addytywne mieszanie barw` → page 303 (`QLIT0m`) with pop-ups 1186 and 1198. An entry with no pop-ups just opens the page. This drives the Index screen ("Indeks"), and it also maps subject codes to their Polish titles.
+
+## Template section (not decoded yet)
+
+The template section is byte-packed, not word-aligned. It starts `0001 0280 01E0` (version, 640×480 window) and defines the page templates that object headers refer to (header word 1: 6, 0x09CB, 0x0BF2, …). Each template lists panels. A panel record looks like `0001, template-name, 0001, 0000, object index, 3 bytes, w, h, x, y`. The window frame pieces decoded so far:
+
+| Panel object | Bitmap | Size | Position |
+|---|---|---|---|
+| 563 | `nav\frametop` | 544×4 | (94, 0) |
+| 562 | `nav\framesid` | 4×450 | (634, 4) |
+| 561 | `nav\framebot` | 544×5 | (94, 454) |
+
+So **the 540×450 page area sits at (94, 4)**, with the navigation template (object 989, 640×480) behind it. The section also holds text styles (`Times New Roman CE`, with colours) used by runtime text.
 
 ## Object record
 
-1664 of the 1668 records share this 18-word header. The other 4 have a different header and aren't decoded yet.
+```
+u16 type
+type 0 (template / frame):  u16 name_id
+type 1, 2, 3:               u16 template, u16 x, u16 y, u16 dir_ref, u16 w5, u16 1, u16 1|2, u16 v
+core:                       u16 nchildren, u16 1, u16 2, u16 id, u16 0, u16 0, u16 0, u16 width, u16 height
+children…                   (nchildren slots)
+trailer                     (type 0 has its own, see below)
+```
 
-| Word | Meaning | Values |
+| type | count | meaning |
+|---|---:|---|
+| 0 | 4 | templates: the three frame pieces and the 640×480 navigation bar (989) |
+| 1 | 1263 | pop-up panels (N, Z, X, J, P, R, G, the Options box). `x, y` = panel position. |
+| 2 | 399 | full pages (article/principle/inventor/timeline/A–Z main pages), 540×450 at (0, 0) of the page area |
+| 3 | 1 | the Index screen (812) |
+
+`width, height` equal the size of the object's background bitmap in **all 1663 records** that have one (checked against the DIB headers). `dir_ref` is the directory, e.g. `\ARTICLE1\AIRC\`. File names in children are relative to it, unless they carry their own relative path (`nav\…`).
+
+### Children
+
+Every child starts with `u16 class`. Most continue with the common **hotspot body**:
+
+```
+u16 sub_or_name  u16 id  u16 shape  u16 x0 y0 x1 y1  u16 cursor_ref  u16 1 0 0  events  u16 0
+events = u16 count, count × { u16 event, u16 nactions, actions }
+```
+
+| class | body | meaning |
 |---|---|---|
-| 0 | object type | 1 = pop-up panel (N/Z/X/J/P/R/G pages), 2 = full page (M), 3 = one record |
-| 1 | ? | 0 (popups), 6 (pages), 2507 and a few others (looks like a template reference) |
-| 2, 3 | x, y of the panel on screen (pages: 0, 0) | e.g. J panels at (151, 137), glossary at (121, 113) |
-| 4 | directory string, e.g. `\ARTICLE1\AIRC\` | |
-| 5 | 0 (4 records have a string here) | |
-| 6–8 | 1, 1, 1 | |
-| 9 | number of child elements | |
-| 10, 11 | 1, 2 | |
-| 12 | object id (a separate number space from strings and indices) | |
-| 13–15 | 0, 0, 0 | |
-| 16, 17 | width, height | **equal to the first bitmap's size in all 1445 decoded records** (540×450 article pages, 237×132 J panels, …) |
+| 3, sub 1 | `0 0 0 0 file_ref` | **bitmap**: background picture of the object, an opaque rectangle |
+| 3, sub 2 | hotspot + `0 4` | **hotspot** (≈ 9 500): `shape` 4 = rectangle (5 and 1 also occur); usually cursor `Hand` |
+| 3, sub = name | hotspot + `0 4` | named hotspot (title screen, full-screen click area) |
+| 4 | hotspot + `0 4 n` | A–Z dial letter region; `n` is the letter number |
+| 5, sub 2 | hotspot | inert region, no events; one at the end of many pages |
+| 7, sub 2 | hotspot + `media_ref 1 0 0 0 0 0 107` | timeline hotspot with an extra animation (e.g. `TT070m0a`) and cursor resource 107 |
+| 2 | hotspot + `0 x0 y0 x1 y1 anim_ref cursor_ref 0 1 20 3 3 3 39 7 107` | **animation** element: an ANI file placed at the rectangle. Started by action 2 or by the object's open event. |
+| 6 | hotspot + `anim_ref 1 0 0 0 0 0 107` | **navigation button**: grow animation `nav\navb0mNa` |
+| 10 | fixed 45 words | **scrolling bitmap view** (help pages): scroll bar rectangle, 8 scroll bar bitmaps from the EXE (`@LINEUP`, `@THUMB`, … where `@` means EXE resource), view rectangle, content bitmap (`Helpamt0`). It takes **2 child slots** (its content counts as a child). |
+| 15, 16 | hotspot + `out_img in_img …` (8 / 5 words) | **bitmap buttons** using the EXE's `@OKOUT/@OKIN`, `@CANCLOUT/@CANCLIN` |
+| 12, 13 | | text entry (`IBeam` cursor) and list box (inline Pascal strings `SimpleLBData`, `Regular`) in the Index screen only, not decoded |
 
-Then come the child elements, then a short trailer (see open questions).
+### Events
 
-### Child elements
+| event | count | meaning |
+|---|---:|---|
+| 1 | 22 | on object open (starts the page's animation element) |
+| 4 | 9506 | click |
+| 6 | 191 | timeline hotspots: probably mouse-over or a second click mode (to confirm at runtime) |
 
-Each child starts with a class word. Decoded so far:
+### Actions
 
-- **class 3, sub 1: bitmap.** `0003 0001 0000 0000 0000 0000 file`, where `file` is the bitmap stem in the object's directory. This is how a page or pop-up gets its picture; the panel is a plain opaque rectangle of that bitmap at (x, y).
-- **class 3, sub 2: hotspot.** `0003 0002 id shape x0 y0 x1 y1 cursor 1 0 0 nEvents events… 0 0 4`
-  - `shape`: 4 = rectangle (most), 5 = also seen.
-  - `cursor`: cursor name string (`Hand`, `normal`, …).
-  - Each event is `type nActions action…`. Event type 4 is used for plain clicks, probably "OnClick"; type 6 also occurs.
-- **class 5, sub 2**: a hotspot with no region and no events. It appears once at the end of many pages.
-- **class 7, sub 2**: a hotspot with a 10-word tail holding an extra media string (e.g. `TT070m0a`) and the value 107 (= the EXE's `GROUP_CURSOR` resource 107).
+| type | payload (words) | count | meaning (provisional) |
+|---|---|---:|---|
+| 1 | `u32 object, u16` | 2095 | go to page / open object (callout notes `N`, pages) |
+| 2 | `u16 element_id, u16 107` | 99 | start the animation element with this id |
+| 3 | `u32 object, u16 flag` | 6889 | open pop-up (zoom, glossary link, "Patrz też" entry); the flag is 1 for glossary-to-glossary links |
+| 4 | `str, -1, -1, 1, 1, 0, 1` | 294 | play media (sound or animation) |
+| 7 | `str anim, -1, -1, -1, 1, 0, 0, 1, 0, 0` | 440 | play animation in place (e.g. `REFR0m0a` on the refrigerator page) |
+| 12 | `u16 n` | 3 | select option `n` (Options screen radio buttons) |
+| 13 | `u32 object` | 1 | cancel / close back to object |
 
-Actions are a type word plus a fixed-length payload:
+All 8985 object references in actions fall inside the table.
 
-| Type | Payload words | Seen as | Meaning (provisional) |
-|---|---:|---|---|
-| 1 | 3 | `u32 object, u16` | open object (page) |
-| 2 | 2 | `str, u16` | ? (str 0x565) |
-| 3 | 3 | `u32 object, u16 flag` | open pop-up object (glossary links, "Patrz też" entries) |
-| 4 | 7 | `str, -1, -1, 1, 1, 0, 1` | play media? |
-| 7 | 10 | `str (animation, e.g. REFR0m0a), -1, -1, -1, 1, 0, 0, 1, 0, 0` | play animation |
-| 12 | 1 | `u16` | ? (radio/list selection) |
-| 13 | ? | | not decoded |
+### Trailer (types 1–3)
 
-### Open questions (next step)
+```
+events (object-level, e.g. event 1 = on open)
+u16 0
+u16 nTable [nTable × u32 target, nTable × anim_ref, u16 extra]   -- only the A–Z page (253): 24 letters → page + letter animation
+u16 nLinks, nLinks × 4 × u32 object                              -- 85 pages: 4 object links, probably navigation targets (to confirm)
+```
 
-- Class 2 (no subtype word; buttons with text and colour fields), 4, 10 (scroll list: 9 item ids, the A–Z/index lists), 12 and 16 children: 223 records aren't decoded yet.
-- The fixed tail words after hotspot events (`0 0 4` for class 3, `0 0` for class 5) and the object trailer (`0 0 0 0`, `0 0 0`, or a count followed by u32 object indices, e.g. the pop-ups owned by a page) don't fit one consistent framing yet. The parser accepts them but doesn't validate them.
-- The directory block.
-- Event and action numbering. The EXE also contains a script expression evaluator (`1030:8D7C`: typed values int/bool/string/rect/point/double with comparison and arithmetic operators). Some actions may carry expressions.
+Type 0 (template) trailer: `0 0`, then for each class-6 button its id, then each button's u32 target object. The navigation bar maps its 9 buttons to objects 984, 985, 253 (A–Z), 776, 986, 987 (Options), 988, 812 (Index), ….
 
-The binary reader in the EXE hasn't been located yet. Ghidra's decompiler handles this 16-bit far code poorly (call arguments are lost), so the work so far is data-driven, checked against the exact record lengths. Finishing it needs the reader found in Ghidra (Phase 3) or traced at runtime (Phase 4).
+## Port notes
+
+- Load the pool, the object table and the index table at startup, and parse records lazily, as the original does. The C parser follows `tools/dkmm.py` one-to-one.
+- Rendering a page is: background bitmap at the page origin (94, 4), then any pop-ups (type 1) at `origin + (x, y)` with their bitmap. Hotspots are rectangles in the object's local coordinates. Animations play at their element rectangle.
+- Still to confirm at runtime (Phase 4): the exact screen origin of pop-ups, event 6, the action 4/7 parameters, and the meaning of the 4 links.
