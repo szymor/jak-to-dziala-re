@@ -124,7 +124,7 @@ events = u16 count, count × { u16 event, u16 nactions, actions }
 | 3, sub = name | hotspot + `0 4` | named hotspot (title screen, full-screen click area) |
 | 4 | hotspot + `0 4 n` | A–Z dial letter region; `n` is the letter number |
 | 5, sub 2 | hotspot | inert region, no events; one at the end of many pages |
-| 7, sub 2 | hotspot + `media_ref 1 0 0 0 0 0 107` | timeline hotspot with an extra animation (e.g. `TT070m0a`) and cursor resource 107 |
+| 7, sub 2 | hotspot + `anim_ref 1 0 0 0 0 0 107` | **auto-play animation** element: plays `anim_ref` (e.g. `QEMG1m0a`, the Workshop hub animations) and fires event 6 when it ends (verified) |
 | 2 | hotspot + `0 x0 y0 x1 y1 anim_ref cursor_ref 0 1 20 3 3 3 39 7 107` | **animation** element: an ANI file placed at the rectangle. Started by action 2 or by the object's open event. |
 | 6 | hotspot + `anim_ref 1 0 0 0 0 0 107` | **navigation button**: grow animation `nav\navb0mNa` |
 | 10 | fixed 45 words | **scrolling bitmap view** (help pages): scroll bar rectangle, 8 scroll bar bitmaps from the EXE (`@LINEUP`, `@THUMB`, … where `@` means EXE resource), view rectangle, content bitmap (`Helpamt0`). It takes **2 child slots** (its content counts as a child). |
@@ -137,15 +137,15 @@ events = u16 count, count × { u16 event, u16 nactions, actions }
 |---|---:|---|
 | 1 | 22 | on object open (starts the page's animation element) |
 | 4 | 9506 | click |
-| 6 | 191 | timeline hotspots: probably mouse-over or a second click mode (to confirm at runtime) |
+| 6 | 191 | **animation finished** (class-7 elements). Verified: `QEMG1m` plays its film animation, then event 6 → action 3 → page 1120 (`QEMG2m`, "KONIEC"). |
 
 ### Actions
 
 | type | payload (words) | count | meaning (provisional) |
 |---|---|---:|---|
-| 1 | `u32 object, u16` | 2095 | go to page / open object (callout notes `N`, pages) |
+| 1 | `u32 object, u16` | 2095 | open object, **replacing** the current pop-up (verified: Options → "Historie z życia mamutów" closes `OPTI00` and opens `OPTI01`) |
 | 2 | `u16 element_id, u16 107` | 99 | start the animation element with this id |
-| 3 | `u32 object, u16 flag` | 6889 | open pop-up (zoom, glossary link, "Patrz też" entry); the flag is 1 for glossary-to-glossary links |
+| 3 | `u32 object, u16 flag` | 6889 | open object: a type-1 target opens as a pop-up (zoom, glossary link, "Patrz też" entry), a type-2 target navigates to that page (verified: mammoth story item → page 990). The flag is 1 for glossary-to-glossary links. |
 | 4 | `str, -1, -1, 1, 1, 0, 1` | 294 | play media (sound or animation) |
 | 7 | `str anim, -1, -1, -1, 1, 0, 0, 1, 0, 0` | 440 | play animation in place (e.g. `REFR0m0a` on the refrigerator page) |
 | 12 | `u16 n` | 3 | select option `n` (Options screen radio buttons) |
@@ -159,13 +159,29 @@ All 8985 object references in actions fall inside the table.
 events (object-level, e.g. event 1 = on open)
 u16 0
 u16 nTable [nTable × u32 target, nTable × anim_ref, u16 extra]   -- only the A–Z page (253): 24 letters → page + letter animation
-u16 nLinks, nLinks × 4 × u32 object                              -- 85 pages: 4 object links, probably navigation targets (to confirm)
+u16 nLinks, nLinks × 4 × u32 object                              -- all 149 machine articles: (principles, A-Z, inventor, timeline)
 ```
 
-Type 0 (template) trailer: `0 0`, then for each class-6 button its id, then each button's u32 target object. The navigation bar maps its 9 buttons to objects 984, 985, 253 (A–Z), 776, 986, 987 (Options), 988, 812 (Index), ….
+The 4 links are the article's targets for the **context-sensitive navigation buttons** Działy nauki, Urządzenia, Wynalazcy and Historia. Verified: on the battery page (104), Historia opens `TT050m` (link 4), not the default timeline page.
+
+Type 0 (template) trailer: `0 0`, then 9 button ids, then 9 u32 default targets. The targets are in **function order**, not paired with the id list: 984 Workshop, 985 principles hub (`QQQQ0m`), 253 A–Z, 776 inventors (`Iiii0m`), 986 timeline (`TTtt0m`), 987 Options, 988 mammoth stories, 812 Index, 676 Help. Entries 1–4 are the defaults that an article's links override. Verified by clicking each button: Warsztat → 984, Urządzenia → 253, Działy nauki → 985, Historia → 986, Wynalazcy → 776, Indeks → 812, Opcje → 987. Wróć (back) has no target. How the id list maps buttons to functions is still unexplained.
+
+## Runtime verification (Wine, headless)
+
+Checked against the running original with `tools/orig.sh` and pixel matching of the decoded bitmaps in screenshots. The app's client area starts at window offset (3, 29), below the Win3.1 caption.
+
+| Prediction from the data | Observed |
+|---|---|
+| nav bar (`nav\nav`) at client (0, 0) | exact (100% pixels) |
+| pages at page-area origin (94, 4): Workshop, A–Z, principles, timeline, inventors, `QEMG1m`/`2m`, `TT050m` | exact |
+| pop-up at `(94, 4) + (x, y)` | **x exact, y + 8**: each pop-up is a small child window with an 8-pixel title strip (system-menu box). Its bitmap starts below the strip. Checked for Options (987), Index (812), `OPTI01` (988) and `BATT2z` (274). |
+| index entry "Akumulator samochodowy - bateria" → page 104 + pop-up 274 | exact |
+| action 1 replaces the pop-up, action 3 opens a pop-up or navigates, event 6 = animation end, links = context navigation | as described above |
+
+Pop-ups therefore need an 8-px title strip in the port, or the bitmap must be drawn at `y + 8`.
 
 ## Port notes
 
 - Load the pool, the object table and the index table at startup, and parse records lazily, as the original does. The C parser follows `tools/dkmm.py` one-to-one.
-- Rendering a page is: background bitmap at the page origin (94, 4), then any pop-ups (type 1) at `origin + (x, y)` with their bitmap. Hotspots are rectangles in the object's local coordinates. Animations play at their element rectangle.
-- Still to confirm at runtime (Phase 4): the exact screen origin of pop-ups, event 6, the action 4/7 parameters, and the meaning of the 4 links.
+- Rendering a page is: background bitmap at the page origin (94, 4), then any pop-ups (type 1): an 8-px title strip at `origin + (x, y)` and the bitmap below it. Hotspots are rectangles in the object's local coordinates. Animations play at their element rectangle.
+- Still to confirm: the action 4/7 parameters, action 13 and the A–Z dial behaviour.
