@@ -3,6 +3,8 @@
 #include "formats/dib.h"
 #include "formats/dkmm.h"
 #include "formats/ne_res.h"
+#include "text/cp1250.h"
+#include "ui/font.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -23,6 +25,16 @@ static const int nav_button_function[9] = {NAV_WORKSHOP, NAV_AZ, NAV_PRINCIPLES,
 typedef struct Rect {
     int x, y, w, h;
 } Rect;
+
+/* A scroll bar (class 10) of the top pop-up: over scrolled content (class 9, help pages)
+ * or over the Index list. Geometry measured in the original: arrows 16x16 at both ends,
+ * the THUMBTRACK bitmap between them, a 16x16 thumb at top+16+round(pos*(h-47)/range). */
+typedef struct ScrollBar {
+    int bar, content;          /* child indices; content -1 = the Index list */
+    int pos, range, maxoff, line;
+} ScrollBar;
+
+enum { PART_NONE, PART_UP, PART_DOWN, PART_THUMB };
 
 typedef struct CachedDib {
     char path[96];
@@ -65,6 +77,7 @@ struct Game {
     int page, fullscreen;
     Rect page_rect;            /* where the page's coordinates start, and its clip */
     int popups[MAX_POPUPS], npopups;
+    int pop_x[MAX_POPUPS], pop_y[MAX_POPUPS];   /* screen position of each open pop-up */
     int history[MAX_HISTORY], nhistory;
 
     Media media;
@@ -83,7 +96,25 @@ struct Game {
     /* EXE bitmaps named by the data with an '@' prefix (button images), colour-mapped */
     struct { char name[24]; Dib dib; int ok; } exe_bmp[16];
     int nexe_bmp;
+
+    /* widgets of the top pop-up */
+    int widget_obj;            /* pop-up the widget state belongs to (-1 none) */
+    ScrollBar sb[4];
+    int nsb;
+    int press_sb, press_part, drag_off;
+    Uint64 press_next_ns;
+    Font *font;
+    uint8_t col_bg, col_fg, col_sel_bg, col_sel_fg;
+
+    /* Index screen (class 12 edit field + class 13 list) */
+    int idx_edit, idx_list, idx_sb;    /* child / scroll bar indices, -1 if not present */
+    char idx_text[128];                /* CP1250 */
+    int idx_selall, idx_sel, idx_top;
+    Uint64 idx_last_click_ns;
+    int idx_last_row;
 };
+
+#define IDX_ROW_H 12           /* list rows are 12 px apart (measured) */
 
 #define DIAL_OK_X 334          /* where the original draws EXE bitmaps 172/173 on the A-Z page */
 #define DIAL_OK_Y 350
@@ -260,6 +291,9 @@ static void draw_buttons(Game *g, const DkObject *o, int ox, int oy)
 
 static Rect popup_rect(Game *g, const DkObject *o)
 {
+    for (int p = g->npopups - 1; p >= 0; p--)
+        if (g->popups[p] == o->index)
+            return (Rect){g->pop_x[p], g->pop_y[p], o->width, o->height + STRIP_H};
     int16_t x = (int16_t)o->x, y = (int16_t)o->y;    /* Help has x = -40 */
     return (Rect){g->page_panel.x + x, g->page_panel.y + y, o->width, o->height + STRIP_H};
 }
@@ -276,6 +310,201 @@ static void origin(Game *g, int i, int *ox, int *oy)
         *ox = g->page_rect.x;
         *oy = g->page_rect.y;
     }
+}
+
+/* ------------------------------------------------------------------ widgets */
+
+static int hit(const uint16_t r[4], int x, int y)
+{
+    return r[2] > r[0] && x >= r[0] && x <= r[2] && y >= r[1] && y <= r[3];
+}
+
+static int in_rect(Rect r, int x, int y) { return x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h; }
+
+
+static uint8_t nearest_index(const Screen *s, int r, int gg, int b)
+{
+    int best = 0, bd = 1 << 30;
+    for (int j = 0; j < 256; j++) {
+        int dr = r - s->palette[j].r, dg = gg - s->palette[j].g, db = b - s->palette[j].b, dd = dr * dr + dg * dg + db * db;
+        if (dd < bd)
+            bd = dd, best = j;
+    }
+    return (uint8_t)best;
+}
+
+static int idx_count(const Game *g) { return g->dk.nindex; }
+
+static const char *idx_entry(const Game *g, int i, size_t *len)
+{
+    return dkmm_string(&g->dk, g->dk.index[i].text, len);
+}
+
+static int idx_rows(Game *g, const DkObject *o)
+{
+    const DkChild *l = &o->children[g->idx_list];
+    return (l->rect[3] - l->rect[1]) / IDX_ROW_H;
+}
+
+static void sb_update_range(Game *g, const DkObject *o, ScrollBar *b)
+{
+    if (b->content >= 0)
+        return;
+    int range = idx_count(g) - idx_rows(g, o);
+    b->range = range > 0 ? range : 0;
+    b->pos = g->idx_top;
+}
+
+/* Prepares the widget state when a pop-up comes to the top. */
+static void widgets_setup(Game *g)
+{
+    int top = g->npopups ? g->popups[g->npopups - 1] : -1;
+    if (top == g->widget_obj)
+        return;
+    g->widget_obj = top;
+    g->nsb = 0;
+    g->idx_edit = g->idx_list = g->idx_sb = -1;
+    g->press_part = PART_NONE;
+    if (top < 0)
+        return;
+    DkObject *o = object(g, top);
+    if (!o)
+        return;
+    for (int k = 0; k < o->nchild; k++) {
+        if (o->children[k].cls == 12)
+            g->idx_edit = k;
+        if (o->children[k].cls == 13)
+            g->idx_list = k;
+    }
+    for (int k = 0; k < o->nchild && g->nsb < 4; k++) {
+        const DkChild *c = &o->children[k];
+        if (c->cls != 10)
+            continue;
+        ScrollBar *b = &g->sb[g->nsb];
+        memset(b, 0, sizeof *b);
+        b->bar = k;
+        b->content = -1;
+        uint16_t target = c->raw[7];
+        for (int m = 0; m < o->nchild; m++)
+            if (o->children[m].cls == 9 && o->children[m].id == target)
+                b->content = m;
+        if (b->content >= 0) {
+            const DkChild *v = &o->children[b->content];
+            char path[256];
+            resolve(g, o->dir, v->file, ".DIB", path, sizeof path);
+            const Dib *d = bitmap(g, path);
+            int vh = v->rect[3] - v->rect[1];
+            b->maxoff = d && d->height > vh ? d->height - vh : 0;
+            b->line = vh / 14 > 0 ? vh / 14 : 1;              /* 21 px on the help pages (measured) */
+            b->range = (b->maxoff + b->line - 1) / b->line;
+        } else if (g->idx_list >= 0) {
+            g->idx_sb = g->nsb;
+        } else {
+            continue;
+        }
+        g->nsb++;
+    }
+    if (g->idx_list >= 0) {
+        g->idx_text[0] = 0;
+        g->idx_selall = 0;
+        g->idx_sel = -1;
+        g->idx_top = 0;
+        g->idx_last_click_ns = 0;
+        if (g->idx_sb >= 0)
+            sb_update_range(g, o, &g->sb[g->idx_sb]);
+    }
+}
+
+static Rect sb_rect(const DkObject *o, const ScrollBar *b, int ox, int oy)
+{
+    const uint16_t *r = o->children[b->bar].rect;
+    return (Rect){ox + r[0], oy + r[1], r[2] - r[0], r[3] - r[1]};
+}
+
+static int sb_thumb_y(const ScrollBar *b, Rect r)
+{
+    int travel = r.h - 47;
+    return r.y + 16 + (b->range > 0 ? (b->pos * travel * 2 + b->range) / (2 * b->range) : 0);
+}
+
+static int sb_offset(const ScrollBar *b)
+{
+    return b->range > 0 ? (b->pos * b->maxoff * 2 + b->range) / (2 * b->range) : 0;
+}
+
+static void draw_scrollbar(Game *g, const DkObject *o, const ScrollBar *b, int ox, int oy)
+{
+    Rect r = sb_rect(o, b, ox, oy);
+    int pressed_up = g->press_part == PART_UP && g->sb + g->press_sb == b;
+    int pressed_down = g->press_part == PART_DOWN && g->sb + g->press_sb == b;
+    /* the record names its bitmaps: @LINEUP @LINEDOWN @THUMB @THUMBTRACK, then the ...ALT (pressed) set */
+    const uint16_t *names = o->children[b->bar].raw + 14;
+    Rect track = {r.x, r.y + 16, r.w, r.h - 32};
+    const Dib *d;
+    if ((d = exe_bitmap(g, names[3])))
+        blit_clipped(g->screen, d, r.x, r.y + 16, track);
+    if ((d = exe_bitmap(g, names[2])))
+        blit_clipped(g->screen, d, r.x, sb_thumb_y(b, r), r);
+    if ((d = exe_bitmap(g, names[pressed_up ? 4 : 0])))
+        blit_clipped(g->screen, d, r.x, r.y, r);
+    if ((d = exe_bitmap(g, names[pressed_down ? 5 : 1])))
+        blit_clipped(g->screen, d, r.x, r.y + r.h - 16, r);
+}
+
+static void draw_index(Game *g, const DkObject *o, int ox, int oy)
+{
+    Screen *s = g->screen;
+    char utf8[512];
+    if (g->idx_edit >= 0) {
+        const uint16_t *e = o->children[g->idx_edit].rect;
+        Clip c = {ox + e[0] + 1, oy + e[1] + 1, e[2] - e[0] - 2, e[3] - e[1] - 2};
+        int ty = oy + e[1] + (e[3] - e[1] - font_line(g->font)) / 2;
+        size_t n = cp1250_to_utf8(g->idx_text, strlen(g->idx_text), utf8, sizeof utf8);
+        int w = font_width(g->font, utf8, n);
+        if (g->idx_selall && n)
+            fill(s, ox + e[0] + 3, ty, w, font_line(g->font), g->col_sel_bg);
+        font_draw(g->font, s, utf8, n, ox + e[0] + 3, ty, c, g->idx_selall ? g->col_sel_fg : g->col_fg);
+        fill(s, ox + e[0] + 3 + w, ty, 1, font_line(g->font), g->col_fg);            /* caret */
+    }
+    if (g->idx_list >= 0) {
+        const uint16_t *l = o->children[g->idx_list].rect;
+        int right = ox + l[2];
+        if (g->idx_sb >= 0)
+            right = ox + o->children[g->sb[g->idx_sb].bar].rect[0];
+        int rows = idx_rows(g, o), n = idx_count(g);
+        for (int r = 0; r < rows && g->idx_top + r < n; r++) {
+            int i = g->idx_top + r, y = oy + l[1] + r * IDX_ROW_H;
+            Clip c = {ox + l[0] + 1, y, right - (ox + l[0] + 1), IDX_ROW_H};
+            if (i == g->idx_sel)
+                fill(s, c.x, y, c.w, IDX_ROW_H - 1, g->col_sel_bg);
+            size_t len;
+            const char *t = idx_entry(g, i, &len);
+            size_t u = cp1250_to_utf8(t, len, utf8, sizeof utf8);
+            font_draw(g->font, s, utf8, u, ox + l[0] + 3, y - 1, c, i == g->idx_sel ? g->col_sel_fg : g->col_fg);
+        }
+    }
+}
+
+/* Draws the widgets of the top pop-up (object o, content origin ox, oy). */
+static void draw_widgets(Game *g, const DkObject *o, int ox, int oy)
+{
+    for (int i = 0; i < g->nsb; i++) {
+        ScrollBar *b = &g->sb[i];
+        if (b->content >= 0) {
+            const DkChild *v = &o->children[b->content];
+            char path[256];
+            resolve(g, o->dir, v->file, ".DIB", path, sizeof path);
+            const Dib *d = bitmap(g, path);
+            Rect view = {ox + v->rect[0], oy + v->rect[1], v->rect[2] - v->rect[0], v->rect[3] - v->rect[1]};
+            if (d)
+                blit_clipped(g->screen, d, view.x, view.y - sb_offset(b), view);
+        } else {
+            sb_update_range(g, o, b);
+        }
+        draw_scrollbar(g, o, b, ox, oy);
+    }
+    if (g->idx_list >= 0)
+        draw_index(g, o, ox, oy);
 }
 
 /* ------------------------------------------------------------------ composition */
@@ -324,7 +553,13 @@ static void compose(Game *g)
             blit_clipped(s, d, r.x, r.y + STRIP_H, all);
         fill(s, r.x, r.y + STRIP_H, r.w, 1, SYS_BLACK);       /* line under the strip (over the first row) */
         draw_buttons(g, o, r.x, r.y + STRIP_H);
+        if (p == g->npopups - 1) {
+            widgets_setup(g);
+            draw_widgets(g, o, r.x, r.y + STRIP_H);
+        }
     }
+    if (!g->npopups)
+        widgets_setup(g);
     g->dirty = 0;
 }
 
@@ -391,6 +626,8 @@ static int media_wav(Game *g, const char *path)
 /* ------------------------------------------------------------------ navigation and actions */
 
 static void run_events(Game *g, int obj, const DkEvent *ev, int n, uint16_t which);
+static void options_function(Game *g, int n);
+static void idx_ok(Game *g);
 static void open_object(Game *g, uint32_t target, int replace_popup);
 
 static void set_page_layout(Game *g, const DkObject *o)
@@ -464,16 +701,40 @@ static void open_object(Game *g, uint32_t target, int replace_popup)
         return;
     }
     media_stop(g);
+    /* Help pages share one window (verified): a pop-up of the same non-default template as the
+     * top pop-up takes its place and position, whatever position it declares. */
+    int keep_x = 0, keep_y = 0, keep = 0;
+    if (g->npopups && o->tmpl) {
+        DkObject *topo = object(g, g->popups[g->npopups - 1]);
+        if (topo && topo->tmpl == o->tmpl) {
+            keep = 1;
+            keep_x = g->pop_x[g->npopups - 1];
+            keep_y = g->pop_y[g->npopups - 1];
+            replace_popup = 1;
+        }
+    }
     if (replace_popup && g->npopups)
         g->npopups--;
     for (int p = 0; p < g->npopups; p++)       /* already open: bring to top */
         if (g->popups[p] == (int)target) {
             memmove(g->popups + p, g->popups + p + 1, (size_t)(g->npopups - p - 1) * sizeof *g->popups);
+            memmove(g->pop_x + p, g->pop_x + p + 1, (size_t)(g->npopups - p - 1) * sizeof *g->pop_x);
+            memmove(g->pop_y + p, g->pop_y + p + 1, (size_t)(g->npopups - p - 1) * sizeof *g->pop_y);
             g->npopups--;
             break;
         }
     if (g->npopups == MAX_POPUPS)
-        memmove(g->popups, g->popups + 1, (MAX_POPUPS - 1) * sizeof *g->popups), g->npopups--;
+    {
+        memmove(g->popups, g->popups + 1, (MAX_POPUPS - 1) * sizeof *g->popups);
+        memmove(g->pop_x, g->pop_x + 1, (MAX_POPUPS - 1) * sizeof *g->pop_x);
+        memmove(g->pop_y, g->pop_y + 1, (MAX_POPUPS - 1) * sizeof *g->pop_y);
+        g->npopups--;
+    }
+    {
+        int16_t px = (int16_t)o->x, py = (int16_t)o->y;
+        g->pop_x[g->npopups] = keep ? keep_x : g->page_panel.x + px;
+        g->pop_y[g->npopups] = keep ? keep_y : g->page_panel.y + py;
+    }
     g->popups[g->npopups++] = (int)target;
     SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "popup %d", (int)target);
     g->dirty = 1;
@@ -486,6 +747,8 @@ static void close_object(Game *g, int target)
     for (int p = g->npopups - 1; p >= 0; p--)
         if (g->popups[p] == target) {
             memmove(g->popups + p, g->popups + p + 1, (size_t)(g->npopups - p - 1) * sizeof *g->popups);
+            memmove(g->pop_x + p, g->pop_x + p + 1, (size_t)(g->npopups - p - 1) * sizeof *g->pop_x);
+            memmove(g->pop_y + p, g->pop_y + p + 1, (size_t)(g->npopups - p - 1) * sizeof *g->pop_y);
             g->npopups--;
             g->dirty = 1;
             return;
@@ -537,7 +800,7 @@ static void run_action(Game *g, int obj, const DkAction *a)
         media_ani(g, path, ox, oy);
         break;
     case 13: close_object(g, (int)arg32(a)); break;                 /* close that object */
-    case 12: break;                                                 /* options radio button: later */
+    case 12: options_function(g, a->args[0]); break;                /* Options: copy / print / print setup */
     default: break;
     }
 }
@@ -584,12 +847,265 @@ static void media_finished(Game *g)
     }
 }
 
+/* ------------------------------------------------------------------ Index screen and options */
+
+static void idx_show(Game *g, const DkObject *o)
+{
+    int rows = idx_rows(g, o);
+    if (g->idx_sel >= 0) {
+        if (g->idx_sel >= g->idx_top + rows)
+            g->idx_top = g->idx_sel - rows + 1;          /* verified: lands on the last visible row */
+        if (g->idx_sel < g->idx_top)
+            g->idx_top = g->idx_sel;
+    }
+    int maxtop = idx_count(g) - rows;
+    if (g->idx_top > maxtop)
+        g->idx_top = maxtop > 0 ? maxtop : 0;
+    if (g->idx_top < 0)
+        g->idx_top = 0;
+    g->dirty = 1;
+}
+
+/* Verified in the original: the selection is the first entry whose Polish sort key is >= the text. */
+static void idx_search(Game *g, const DkObject *o)
+{
+    size_t tl = strlen(g->idx_text);
+    if (!tl) {
+        g->idx_sel = -1;
+        g->dirty = 1;
+        return;
+    }
+    int lo = 0, hi = idx_count(g);
+    while (lo < hi) {
+        int mid = (lo + hi) / 2;
+        size_t n;
+        const char *e = idx_entry(g, mid, &n);
+        if (cp1250_compare(e, n, g->idx_text, tl) < 0)
+            lo = mid + 1;
+        else
+            hi = mid;
+    }
+    g->idx_sel = lo < idx_count(g) ? lo : idx_count(g) - 1;
+    idx_show(g, o);
+}
+
+/* Selecting an entry in the list puts its text into the edit field, selected (verified). */
+static void idx_select(Game *g, const DkObject *o, int i)
+{
+    int n = idx_count(g);
+    if (n <= 0)
+        return;
+    g->idx_sel = i < 0 ? 0 : i >= n ? n - 1 : i;
+    size_t len;
+    const char *t = idx_entry(g, g->idx_sel, &len);
+    if (len >= sizeof g->idx_text)
+        len = sizeof g->idx_text - 1;
+    memcpy(g->idx_text, t, len);
+    g->idx_text[len] = 0;
+    g->idx_selall = 1;
+    idx_show(g, o);
+}
+
+/* OK / Enter: open the entry's page and its pop-ups. */
+static void idx_ok(Game *g)
+{
+    if (g->idx_sel < 0)
+        return;
+    const DkIndexEntry *e = &g->dk.index[g->idx_sel];
+    int page = e->page, n = e->npopups;
+    uint32_t pops[8];
+    for (int k = 0; k < n && k < 8; k++)
+        pops[k] = ((uint32_t)e->popups[4 * k] << 24) | ((uint32_t)e->popups[4 * k + 1] << 16) |
+                  ((uint32_t)e->popups[4 * k + 2] << 8) | e->popups[4 * k + 3];
+    SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "index entry %d -> page %d", g->idx_sel, page);
+    g->npopups = 0;
+    open_object(g, (uint32_t)page, 0);
+    for (int k = 0; k < n && k < 8; k++)
+        open_object(g, pops[k], 0);
+}
+
+static SDL_Surface *screen_surface(Game *g)
+{
+    SDL_Surface *s = SDL_CreateSurface(SCREEN_W, SCREEN_H, SDL_PIXELFORMAT_INDEX8);
+    if (!s)
+        return NULL;
+    SDL_Palette *pal = SDL_CreateSurfacePalette(s);
+    SDL_Color c[256];
+    for (int i = 0; i < 256; i++)
+        c[i] = (SDL_Color){g->screen->palette[i].r, g->screen->palette[i].g, g->screen->palette[i].b, 255};
+    if (pal)
+        SDL_SetPaletteColors(pal, c, 0, 256);
+    for (int y = 0; y < SCREEN_H; y++)
+        memcpy((uint8_t *)s->pixels + (size_t)y * s->pitch, g->screen->pixels + (size_t)y * SCREEN_W, SCREEN_W);
+    return s;
+}
+
+typedef struct ClipImage {
+    void *png, *bmp;
+    size_t npng, nbmp;
+} ClipImage;
+
+static const void *SDLCALL clip_data(void *user, const char *mime, size_t *size)
+{
+    ClipImage *c = user;
+    if (!SDL_strcmp(mime, "image/png")) {
+        *size = c->npng;
+        return c->png;
+    }
+    *size = c->nbmp;
+    return c->bmp;
+}
+
+static void SDLCALL clip_free(void *user)
+{
+    ClipImage *c = user;
+    SDL_free(c->png);
+    SDL_free(c->bmp);
+    SDL_free(c);
+}
+
+static void *encode(SDL_Surface *s, int png, size_t *n)
+{
+    SDL_IOStream *io = SDL_IOFromDynamicMem();
+    if (!io)
+        return NULL;
+    bool ok = png ? SDL_SavePNG_IO(s, io, false) : SDL_SaveBMP_IO(s, io, false);
+    void *out = NULL;
+    Sint64 size = SDL_GetIOSize(io);
+    if (ok && size > 0) {
+        void *mem = SDL_GetPointerProperty(SDL_GetIOProperties(io), SDL_PROP_IOSTREAM_DYNAMIC_MEMORY_POINTER, NULL);
+        out = SDL_malloc((size_t)size);
+        if (out && mem) {
+            memcpy(out, mem, (size_t)size);
+            *n = (size_t)size;
+        }
+    }
+    SDL_CloseIO(io);
+    return out;
+}
+
+/* Options: 1 "Kopiuj aktywne okno", 2 "Drukuj aktywne okno", 3 "Ustawienia wydruku".
+ * The Options pop-up stays open (verified). Printing is replaced by saving a PNG. */
+static void options_function(Game *g, int n)
+{
+    int top = g->npopups ? g->popups[g->npopups - 1] : -1;
+    g->npopups -= top >= 0;                 /* capture the page as the user sees it without the Options box */
+    compose(g);
+    SDL_Surface *s = screen_surface(g);
+    if (top >= 0)
+        g->popups[g->npopups++] = top;
+    g->dirty = 1;
+    if (!s)
+        return;
+    if (n == 1) {
+        ClipImage *c = SDL_calloc(1, sizeof *c);
+        c->png = encode(s, 1, &c->npng);
+        c->bmp = encode(s, 0, &c->nbmp);
+        const char *types[] = {"image/png", "image/bmp"};
+        if (!SDL_SetClipboardData(clip_data, clip_free, c, types, 2))
+            SDL_LogWarn(SDL_LOG_CATEGORY_APPLICATION, "clipboard: %s", SDL_GetError());
+        SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "copied the screen to the clipboard");
+    } else if (n == 2) {
+        const char *dir = SDL_GetUserFolder(SDL_FOLDER_PICTURES);
+        char *pref = dir ? NULL : SDL_GetPrefPath("twtw", "Jak to dziala");
+        SDL_Time now;
+        SDL_DateTime dt;
+        SDL_GetCurrentTime(&now);
+        SDL_TimeToDateTime(now, &dt, true);
+        char path[1024];
+        SDL_snprintf(path, sizeof path, "%sjak-to-dziala-%04d%02d%02d-%02d%02d%02d.png", dir ? dir : pref, dt.year,
+                     dt.month, dt.day, dt.hour, dt.minute, dt.second);
+        SDL_free(pref);
+        char msg[1200];
+        if (SDL_SavePNG(s, path))
+            SDL_snprintf(msg, sizeof msg, "Zapisano obraz strony:\n%s", path);
+        else
+            SDL_snprintf(msg, sizeof msg, "Nie można zapisać obrazu:\n%s", SDL_GetError());
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "Jak to działa?", msg, NULL);
+    } else {
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, "Jak to działa?",
+                                 "Drukowanie nie jest dostępne. \"Drukuj aktywne okno\" zapisuje stronę jako obraz PNG.",
+                                 NULL);
+    }
+    SDL_DestroySurface(s);
+}
+
+/* Scroll bar hit: returns 1 if (x, y) was on a scroll bar of the top pop-up and handled it. */
+static void sb_set(Game *g, const DkObject *o, ScrollBar *b, int pos)
+{
+    if (pos < 0)
+        pos = 0;
+    if (pos > b->range)
+        pos = b->range;
+    b->pos = pos;
+    if (b->content < 0) {
+        g->idx_top = pos;
+        idx_show(g, o);
+    }
+    g->dirty = 1;
+}
+
+static int sb_click(Game *g, const DkObject *o, int ox, int oy, int x, int y)
+{
+    for (int i = 0; i < g->nsb; i++) {
+        ScrollBar *b = &g->sb[i];
+        if (b->content < 0)
+            sb_update_range(g, o, b);
+        Rect r = sb_rect(o, b, ox, oy);
+        if (!in_rect(r, x, y))
+            continue;
+        int ty = sb_thumb_y(b, r);
+        g->press_sb = i;
+        if (y < r.y + 16) {
+            g->press_part = PART_UP;
+            sb_set(g, o, b, b->pos - 1);
+        } else if (y >= r.y + r.h - 16) {
+            g->press_part = PART_DOWN;
+            sb_set(g, o, b, b->pos + 1);
+        } else if (y >= ty && y < ty + 16) {
+            g->press_part = PART_THUMB;
+            g->drag_off = y - ty;
+            return 1;
+        } else {
+            int page = b->content >= 0 ? 14 : idx_rows(g, o) - 1;   /* one click pages the help to its end (verified) */
+            sb_set(g, o, b, b->pos + (y < ty ? -page : page));
+            return 1;
+        }
+        g->press_next_ns = SDL_GetTicksNS() + 400000000ull;          /* auto-repeat while held */
+        return 1;
+    }
+    return 0;
+}
+
+static int widget_click(Game *g, int top, int x, int y)
+{
+    DkObject *o = object(g, top);
+    widgets_setup(g);
+    Rect pr = popup_rect(g, o);
+    int ox = pr.x, oy = pr.y + STRIP_H;
+    if (sb_click(g, o, ox, oy, x, y))
+        return 1;
+    if (g->idx_list >= 0) {
+        const uint16_t *l = o->children[g->idx_list].rect;
+        if (hit(l, x - ox, y - oy)) {
+            int row = (y - oy - l[1]) / IDX_ROW_H, i = g->idx_top + row;
+            if (row < idx_rows(g, o) && i < idx_count(g)) {
+                Uint64 now = SDL_GetTicksNS();
+                int dbl = i == g->idx_last_row && now - g->idx_last_click_ns < 500000000ull;
+                idx_select(g, o, i);
+                g->idx_last_row = i;
+                g->idx_last_click_ns = now;
+                if (dbl)
+                    idx_ok(g);
+            }
+            return 1;
+        }
+    }
+    return 0;
+}
+
 /* ------------------------------------------------------------------ input */
 
-static int hit(const uint16_t r[4], int x, int y)
-{
-    return r[2] > r[0] && x >= r[0] && x <= r[2] && y >= r[1] && y <= r[3];
-}
 
 /* Topmost hotspot of object 'obj' under (x, y) in screen coordinates; -1 if none. */
 static int hotspot_at(Game *g, int obj, int x, int y)
@@ -648,6 +1164,10 @@ static void click_child(Game *g, int obj, int k)
         click_dial(g, obj, o, c->ntail >= 3 ? c->tail[2] : 0);
         return;
     }
+    if (c->cls == 15 && !c->nevents && g->idx_list >= 0) {   /* the Index screen's OK button */
+        idx_ok(g);
+        return;
+    }
     if (c->cls == 7 || (c->cls == 2 && !c->nevents)) {     /* animated hotspot: play, event 6 at the end */
         play_anim_child(g, obj, k);
         return;
@@ -673,7 +1193,6 @@ static int nav_button_at(Game *g, int x, int y)
     return -1;
 }
 
-static int in_rect(Rect r, int x, int y) { return x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h; }
 
 void game_click(Game *g, int x, int y)
 {
@@ -690,6 +1209,8 @@ void game_click(Game *g, int x, int y)
         int top = g->popups[g->npopups - 1];
         DkObject *o = object(g, top);
         if (o && in_rect(popup_rect(g, o), x, y)) {
+            if (widget_click(g, top, x, y))
+                return;
             int k = hotspot_at(g, top, x, y);
             if (k >= 0)
                 click_child(g, top, k);
@@ -723,8 +1244,25 @@ void game_click(Game *g, int x, int y)
     }
 }
 
+void game_mouse_up(Game *g)
+{
+    if (g->press_part != PART_NONE)
+        g->dirty = 1;
+    g->press_part = PART_NONE;
+}
+
 void game_motion(Game *g, int x, int y)
 {
+    if (g->press_part == PART_THUMB && g->npopups && g->press_sb < g->nsb) {   /* drag the thumb */
+        DkObject *o = object(g, g->popups[g->npopups - 1]);
+        Rect pr = popup_rect(g, o);
+        ScrollBar *b = &g->sb[g->press_sb];
+        Rect r = sb_rect(o, b, pr.x, pr.y + STRIP_H);
+        int travel = r.h - 47;
+        if (travel > 0 && b->range > 0)
+            sb_set(g, o, b, ((y - g->drag_off - r.y - 16) * b->range * 2 + travel) / (2 * travel));
+        return;
+    }
     int hand = 0, obj = -1, k = -1;
     if (g->npopups) {
         int top = g->popups[g->npopups - 1];
@@ -744,8 +1282,54 @@ void game_motion(Game *g, int x, int y)
     g->hover_hand = hand;
 }
 
+int game_text_wanted(const Game *g)
+{
+    return g->npopups && g->widget_obj == g->popups[g->npopups - 1] && g->idx_edit >= 0;
+}
+
+void game_text(Game *g, const char *utf8)
+{
+    if (!game_text_wanted(g))
+        return;
+    char add[64];
+    utf8_to_cp1250(utf8, add, sizeof add);
+    if (g->idx_selall)
+        g->idx_text[0] = 0;
+    g->idx_selall = 0;
+    SDL_strlcat(g->idx_text, add, sizeof g->idx_text);
+    idx_search(g, object(g, g->widget_obj));
+}
+
+static int index_key(Game *g, SDL_Keycode key)
+{
+    DkObject *o = object(g, g->widget_obj);
+    size_t n = strlen(g->idx_text);
+    int rows = idx_rows(g, o);
+    switch (key) {
+    case SDLK_BACKSPACE:
+        if (g->idx_selall)
+            n = 0;
+        else if (n)
+            n--;
+        g->idx_text[n] = 0;
+        g->idx_selall = 0;
+        idx_search(g, o);
+        return 1;
+    case SDLK_RETURN: case SDLK_KP_ENTER: idx_ok(g); return 1;
+    case SDLK_DOWN: idx_select(g, o, g->idx_sel + 1); return 1;
+    case SDLK_UP: idx_select(g, o, g->idx_sel < 0 ? 0 : g->idx_sel - 1); return 1;
+    case SDLK_PAGEDOWN: idx_select(g, o, g->idx_sel + rows - 1); return 1;
+    case SDLK_PAGEUP: idx_select(g, o, g->idx_sel - rows + 1); return 1;
+    case SDLK_HOME: if (g->idx_selall || !n) { idx_select(g, o, 0); return 1; } return 0;
+    case SDLK_END: if (g->idx_selall || !n) { idx_select(g, o, idx_count(g) - 1); return 1; } return 0;
+    default: return 0;
+    }
+}
+
 void game_key(Game *g, SDL_Keycode key)
 {
+    if (!g->media.kind && game_text_wanted(g) && index_key(g, key))
+        return;
     if (key == SDLK_BACKSPACE || key == SDLK_ESCAPE) {
         if (g->media.kind)
             media_stop(g);
@@ -764,6 +1348,14 @@ int game_popup(const Game *g) { return g->npopups ? g->popups[g->npopups - 1] : 
 
 void game_update(Game *g)
 {
+    if (g->press_part == PART_UP || g->press_part == PART_DOWN) {             /* arrow held: repeat */
+        Uint64 now = SDL_GetTicksNS();
+        if (now >= g->press_next_ns && g->npopups && g->press_sb < g->nsb) {
+            ScrollBar *b = &g->sb[g->press_sb];
+            sb_set(g, object(g, g->popups[g->npopups - 1]), b, b->pos + (g->press_part == PART_UP ? -1 : 1));
+            g->press_next_ns = now + 100000000ull;
+        }
+    }
     if (g->dirty)
         compose(g);
     if (g->media.kind == 1) {
@@ -846,6 +1438,22 @@ Game *game_create(Vfs *vfs, Screen *screen, SDL_AudioDeviceID audio, char *err, 
     if (t)
         screen_set_palette(screen, t->palette, t->colours);
     install_system_colours(screen);
+    g->widget_obj = -1;
+    g->idx_edit = g->idx_list = g->idx_sb = -1;
+    /* Index text: the original's style 0x0BE3 colours (white, black, yellow, black) */
+    g->col_bg = nearest_index(screen, 255, 255, 255);
+    g->col_fg = nearest_index(screen, 0, 0, 0);
+    g->col_sel_bg = nearest_index(screen, 255, 255, 0);
+    g->col_sel_fg = g->col_fg;
+    for (int i = 0; i < g->dk.nstyles; i++)
+        if (g->dk.styles[i].name == 0x0be3) {
+            uint8_t (*c)[3] = g->dk.styles[i].colours;
+            g->col_bg = nearest_index(screen, c[0][0], c[0][1], c[0][2]);
+            g->col_fg = nearest_index(screen, c[1][0], c[1][1], c[1][2]);
+            g->col_sel_bg = nearest_index(screen, c[2][0], c[2][1], c[2][2]);
+            g->col_sel_fg = nearest_index(screen, c[3][0], c[3][1], c[3][2]);
+        }
+    g->font = font_open(IDX_ROW_H);
 
     size_t exelen;
     g->exe = vfs_read(vfs, "DKCODE/TWTW.EXE", &exelen);
@@ -999,6 +1607,7 @@ void game_destroy(Game *g)
         SDL_DestroyCursor(g->hand);
     if (g->have_ok_lit)
         dib_free(&g->exe_ok_lit);
+    font_close(g->font);
     for (int i = 0; i < g->nexe_bmp; i++)
         if (g->exe_bmp[i].ok)
             dib_free(&g->exe_bmp[i].dib);

@@ -19,6 +19,11 @@ void game_start(Game *g, int object);
 /* Input in screen coordinates (640x480). */
 void game_click(Game *g, int x, int y);
 void game_motion(Game *g, int x, int y);
+void game_mouse_up(Game *g);
+/* Text typed by the user (UTF-8), for the Index search field. */
+void game_text(Game *g, const char *utf8);
+/* True while a text field has the focus (the app should enable SDL text input). */
+int game_text_wanted(const Game *g);
 void game_key(Game *g, SDL_Keycode key);
 
 /* Advances media and timers; composes the screen when needed. */

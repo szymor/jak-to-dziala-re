@@ -117,8 +117,15 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
         if (event->button.button == SDL_BUTTON_LEFT)
             game_click(app->game, (int)event->button.x, (int)event->button.y);
         break;
+    case SDL_EVENT_MOUSE_BUTTON_UP:
+        if (event->button.button == SDL_BUTTON_LEFT)
+            game_mouse_up(app->game);
+        break;
     case SDL_EVENT_MOUSE_MOTION:
         game_motion(app->game, (int)event->motion.x, (int)event->motion.y);
+        break;
+    case SDL_EVENT_TEXT_INPUT:
+        game_text(app->game, event->text.text);
         break;
     case SDL_EVENT_KEY_DOWN:
         game_key(app->game, event->key.key);
@@ -139,6 +146,13 @@ SDL_AppResult SDL_AppIterate(void *appstate)
     } else {
         game_update(app->game);
         screen_present(&app->screen, app->renderer);
+        int want_text = game_text_wanted(app->game);
+        if (want_text != SDL_TextInputActive(app->window)) {
+            if (want_text)
+                SDL_StartTextInput(app->window);
+            else
+                SDL_StopTextInput(app->window);
+        }
         SDL_Cursor *want = game_cursor(app->game);
         if (!app->cursor_set || want != app->cursor_shown) {
             SDL_SetCursor(want ? want : SDL_GetDefaultCursor());

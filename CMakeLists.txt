@@ -9,6 +9,7 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 find_package(SDL3 REQUIRED CONFIG)
+find_package(SDL3_ttf REQUIRED CONFIG)
 
 if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
   add_compile_options(-Wall -Wextra -Wpedantic -Wshadow -Wno-unused-parameter)
@@ -23,14 +24,17 @@ add_library(twtw_core STATIC
   src/formats/dkmm.c
   src/formats/ne_res.c
   src/util/bytes.c
+  src/text/cp1250.c
 )
 target_include_directories(twtw_core PUBLIC src)
 target_link_libraries(twtw_core PUBLIC SDL3::SDL3)
 
 # The player.
-add_executable(twtw src/main.c src/viewer.c src/platform/screen.c src/engine/ani_player.c src/engine/game.c)
+add_executable(twtw src/main.c src/viewer.c src/platform/screen.c src/engine/ani_player.c src/engine/game.c src/ui/font.c)
+target_link_libraries(twtw PRIVATE SDL3_ttf::SDL3_ttf)
 target_link_libraries(twtw PRIVATE twtw_core)
 
 # Command-line tool for checks and dumps (no window).
-add_executable(twtw-tool src/tool.c src/platform/screen.c src/engine/ani_player.c src/engine/game.c)
+add_executable(twtw-tool src/tool.c src/platform/screen.c src/engine/ani_player.c src/engine/game.c src/ui/font.c)
+target_link_libraries(twtw-tool PRIVATE SDL3_ttf::SDL3_ttf)
 target_link_libraries(twtw-tool PRIVATE twtw_core)
