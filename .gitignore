@@ -1,0 +1,6 @@
+Jak To Działa.iso
+
+# Local reference checkouts (Wine sources for 16-bit .spec files)
+/third_party/
+# Extracted assets / work dirs
+/work/
