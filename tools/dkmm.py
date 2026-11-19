@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Reader for DKCODE/TWTW.PNG, the compiled ("scrunged") DKMM page file.
 See docs/formats/dkmm.md for the layout. All object records but one (the
-Index screen's list box) and the index table decode exactly; the template
-section of the directory block is not decoded yet. Undecoded parts are
+Index screen's list box), the template section and the index table decode
+exactly; the two base-template headers are kept raw. Undecoded parts are
 reported, not guessed.
 
 Usage:
@@ -10,6 +10,7 @@ Usage:
   python3 -I tools/dkmm.py object  work/cd/DKCODE/TWTW.PNG INDEX [INDEX...]
   python3 -I tools/dkmm.py dump    work/cd/DKCODE/TWTW.PNG OUT.txt
   python3 -I tools/dkmm.py index   work/cd/DKCODE/TWTW.PNG
+  python3 -I tools/dkmm.py templates work/cd/DKCODE/TWTW.PNG
 """
 import collections
 import struct
@@ -75,6 +76,110 @@ class Dkmm:
             out.append({'text': text, 'page': page, 'popups': list(struct.unpack_from(f'>{k}I', d, o))})
             o += 4 * k
         return out, o
+
+    # ---------------------------------------------------- template section
+
+    def _panel(self, o):
+        """u16 kind, u16 name, u16 has_obj, [u32 obj], rgb, u16 w, h, x, y."""
+        d = self.d
+        kind, name, has = struct.unpack_from('>HHH', d, o)
+        if kind not in (1, 2, 3) or has not in (0, 1):
+            return None
+        p = o + 6
+        obj = None
+        if has:
+            obj = be32(d, p)
+            p += 4
+        rgb = d[p:p + 3].hex()
+        w, h, x, y = struct.unpack_from('>4H', d, p + 3)
+        if max(w, x) > 640 or max(h, y) > 480:
+            return None
+        return {'kind': kind, 'name': name, 'object': obj, 'rgb': rgb, 'rect': (x, y, w, h)}, p + 11
+
+    def _panel_list(self, o):
+        n = be16(self.d, o)
+        if not 2 <= n <= 12:
+            return None
+        out, p = [], o + 2
+        for _ in range(n):
+            r = self._panel(p)
+            if not r:
+                return None
+            out.append(r[0])
+            p = r[1]
+        return out, p
+
+    def _styles(self, o, end):
+        d = self.d
+        n = be16(d, o)
+        p, out = o + 2, []
+        for _ in range(n):
+            name, ref = struct.unpack_from('>HH', d, p)
+            colours = [d[p + 4 + 3 * k:p + 7 + 3 * k].hex() for k in range(4)]
+            val = be16(d, p + 16)
+            ln = be16(d, p + 26)
+            if ln > 40 or any(d[p + 18:p + 26]):
+                return None
+            face = d[p + 28:p + 28 + ln]
+            p += 28 + ln
+            if d[p:p + 2] != b'\0\0':
+                return None
+            p += 2
+            out.append({'name': name, 'ref': ref, 'colours': colours, 'value': val,
+                        'face': face.decode('cp1250', 'replace')})
+        return out if p == end - 2 and d[end - 2:end] == b'\0\0' else None
+
+    def parse_templates(self):
+        """Template section = directory block up to the index table. See docs/formats/dkmm.md.
+        Base-template headers are kept raw (partly understood); everything else is parsed
+        and the section must tile exactly up to the index table."""
+        d = self.d
+        end, _ = self.find_index()
+        ver, w, h, nbase = struct.unpack_from('>4H', d, self.dir_off)
+        o = self.dir_off + 8
+        bases = []
+        for _ in range(nbase):
+            p = o
+            while not self._panel_list(p):
+                p += 1
+                if p >= end:
+                    raise ValueError('base template panel list not found')
+            panels, q = self._panel_list(p)
+            bases.append({'kind': be16(d, o), 'name': be16(d, o + 2), 'header_raw': d[o:p].hex(),
+                          'panels': panels})
+            if be16(d, q) != 0:
+                raise ValueError('base template trailer')
+            o = q + 2
+        derived = []
+        while self._styles(o, end) is None:
+            kind, name = struct.unpack_from('>HH', d, o)
+            t = {'kind': kind, 'name': name}
+            p = o + 4
+            if kind in (1, 3):
+                t['head'] = list(struct.unpack_from('>3H', d, p))
+                t['flags'] = list(struct.unpack_from('>HH', d, p + 14)) + [d[p + 30], d[p + 31]] + \
+                    list(struct.unpack_from('>HH', d, p + 32))
+                n = be16(d, p + 40)
+                t['panels'] = list(struct.unpack_from(f'>{n}H', d, p + 42))
+                p += 42 + 2 * n
+            elif kind == 2:
+                t['body_raw'] = d[p:p + 38].hex()
+                t['size'] = struct.unpack_from('>HH', d, p + 4)
+                p += 38
+            else:
+                raise ValueError(f'unknown template kind {kind} at {o:#x}')
+            t['tail'] = list(struct.unpack_from('>5H', d, p))
+            t['rgb'] = d[p + 10:p + 13].hex()
+            t['rect'] = struct.unpack_from('>4H', d, p + 13)
+            pad = 4 if kind == 2 else 2
+            if any(d[p + 21:p + 21 + pad]):
+                raise ValueError(f'template padding at {p + 21:#x}')
+            o = p + 21 + pad
+            derived.append(t)
+            if o >= end:
+                raise ValueError('template section overran the index table')
+        return {'version': ver, 'screen': (w, h), 'bases': bases, 'templates': derived,
+                'styles': self._styles(o, end)}
 
     def find_index(self):
         """The index table is the tail of the directory block; the templates before it are
@@ -273,6 +378,21 @@ def fmt_object(dk, i):
 def main(argv):
     cmd, path = argv[0], argv[1]
     dk = Dkmm(open(path, 'rb').read())
+    if cmd == 'templates':
+        t = dk.parse_templates()
+        print(f"version {t['version']} screen {t['screen']}")
+        for b in t['bases']:
+            print(f"base template kind {b['kind']} name {b['name']:#x} header {len(b['header_raw']) // 2} bytes")
+            for p in b['panels']:
+                print(f"    panel kind {p['kind']} name {p['name']:#x} object {p['object']} rgb {p['rgb']} "
+                      f"rect(x,y,w,h) {p['rect']}")
+        for x in t['templates']:
+            print(f"template kind {x['kind']} name {x['name']:#x} panels "
+                  f"{[hex(p) for p in x.get('panels', [])]} size {x.get('size')} rgb {x['rgb']}")
+        for s_ in t['styles']:
+            print(f"style {s_['name']:#x} ref {s_['ref']:#x} colours {s_['colours']} value {s_['value']:#x} "
+                  f"face {s_['face']!r}")
+        return
     if cmd == 'index':
         off, idx = dk.find_index()
         print(f'# index table at {off:#x}, {len(idx)} entries: text, page object, popup objects')

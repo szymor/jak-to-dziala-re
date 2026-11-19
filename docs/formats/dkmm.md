@@ -1,6 +1,6 @@
 # TWTW.PNG: compiled DKMM page file
 
-Status: **1667 of 1668 object records and the index table decode exactly**: every byte of each record is consumed. The template section at the start of the directory block (about 1 KB) and one singleton object (the Index screen's list box) are still open. Field names are inferred from the data and checked against it. The meanings of some constants are not confirmed yet.
+Status: **the whole file decodes exactly**: header, pool, template section, index table and 1667 of 1668 object records, each consumed to the last byte. Still open: the Index screen's list box (one object) and the raw headers of the two base templates. Field names are inferred from the data and checked against it. The meanings of some constants are not confirmed yet.
 
 ```bash
 python3 -I tools/dkmm.py summary work/cd/DKCODE/TWTW.PNG
@@ -29,7 +29,7 @@ The EXE calls this file the *Scrunge File*: the authoring tool compiled ("scrung
 | 0x31 | u32 `pool_size` (0xE1C1), counted from 0x39 |
 | 0x35 | u32 `objtab_off` (0x13532) |
 | 0x39 | **string pool**: u16 count (3813), count × `str` |
-| 0xE1FA | **directory block** up to `objtab_off`: the template section (0xE1FA–0xE5C0), then the index table (0xE5C0–0x13532) |
+| 0xE1FA | **directory block** up to `objtab_off`: the template section (0xE1FA–0xE5C0), then the index table (0xE5C0–0x13532). Both parse exactly. |
 | 0x13532 | **object table**: u32 N (1668), N × u32 offsets relative to `obj_base` = end of the table (0x14F46) |
 | 0x14F46 | N object records, packed back to back to the end of the file |
 
@@ -47,17 +47,46 @@ u16 text_ref   u16 strlen(text)   u32 0   u16 page   u16 k   k × u32 popup
 
 `page` is the object index of the article's main page, and the pop-ups are opened on top of it. Examples: `Akumulator samochodowy - bateria` → page 104 (`BATT0m`) with pop-up 274 (`BATT2z`). `Addytywne mieszanie barw` → page 303 (`QLIT0m`) with pop-ups 1186 and 1198. An entry with no pop-ups just opens the page. This drives the Index screen ("Indeks"), and it also maps subject codes to their Polish titles.
 
-## Template section (not decoded yet)
+## Template section
 
-The template section is byte-packed, not word-aligned. It starts `0001 0280 01E0` (version, 640×480 window) and defines the page templates that object headers refer to (header word 1: 6, 0x09CB, 0x0BF2, …). Each template lists panels. A panel record looks like `0001, template-name, 0001, 0000, object index, 3 bytes, w, h, x, y`. The window frame pieces decoded so far:
+```bash
+python3 -I tools/dkmm.py templates work/cd/DKCODE/TWTW.PNG
+```
 
-| Panel object | Bitmap | Size | Position |
+The section is byte-packed: colours are 3-byte RGB, so u16 fields are not aligned. The parser walks it from 0xE1FA and must end exactly at the index table. Only the two base-template headers are kept raw.
+
+```
+u16 version (1)  u16 screen_w (640)  u16 screen_h (480)  u16 nBase (2)
+nBase × base template:  u16 kind, u16 name, header (raw: 129 / 44 bytes), panel list, u16 0
+derived templates (no count; the list ends where the style list begins), each:
+    kind 1/3: u16 kind, u16 name, u16 1 6 1, 8×00, u16 a b, 12×00, u8 u8, u16 c d, 4×00,
+              u16 n, n × u16 panel name, TAIL, 2×00
+    kind 2:   u16 kind, u16 name, 38 bytes (u16 0 0 w h …), TAIL, 4×00
+    TAIL = u16 0 1 1 1 0, rgb background, u16 w h x y
+u16 nStyles, nStyles × { u16 name, u16 ref, 4 × rgb, u16 value (0xE1), 8×00, u16 len, face[len], u16 0 }
+u16 0
+panel list = u16 n, n × { u16 kind, u16 name, u16 has_obj, [u32 object], rgb, u16 w, h, x, y }
+```
+
+**Window layout** (base template 1; the rgb values look like the author's debug colours):
+
+| Panel name | Object | Bitmap | Rect (x, y, w, h) |
 |---|---|---|---|
-| 563 | `nav\frametop` | 544×4 | (94, 0) |
-| 562 | `nav\framesid` | 4×450 | (634, 4) |
-| 561 | `nav\framebot` | 544×5 | (94, 454) |
+| 0x0BE9 | 989 | navigation bar template | (0, 0, 94, 459) |
+| 1 | – | **page area**: pages and pop-ups go here | (94, 4, 540, 450) |
+| 0x0827 | 563 | `nav\frametop` | (94, 0, 544, 4) |
+| 0x0825 | 562 | `nav\framesid` | (634, 4, 4, 450) |
+| 0x0823 | 561 | `nav\framebot` | (94, 454, 544, 5) |
 
-So **the 540×450 page area sits at (94, 4)**, with the navigation template (object 989, 640×480) behind it. The section also holds text styles (`Times New Roman CE`, with colours) used by runtime text.
+Base template 0x045D (A–Z) is the same, except for an extra page panel 0x045E at (94, 4, 540, 450). Its panel 1 is empty (0×0).
+
+**Object placement.** Object header words 5–7 (`1, kind, panel`) name the panel the object is shown in: `1, 1, 1` (all objects but one) = panel 1, the page area. The A–Z page uses `1, 2, 0x045E`. Pop-up `x, y` are relative to that panel. Header word 1 is the object's template: 0x09CB (79 objects), 0x045D (A–Z), 0x0BF2 (3 title screens), and 6 for all other pages. Value 6 matches no template name; the default template is named 0, so 6 probably refers to it some other way (to confirm).
+
+**Derived templates:** 0 and 0x0BE1/0x09CB = panel 1 + nav bar + frames (normal pages); 0x0BFA/0x0BFB = panel 1 + frames, no nav bar (full-screen views); 0x0BF2 (kind 2) = a 638×459 screen with no panels (title screens). Background colour cream `FFFBF0`.
+
+**Text styles** (used by the Index screen's edit field and list): 0x0BFC and 0x0BE3, both `Times New Roman CE`, with foreground/background colour sets (white/black/navy and white/black/yellow) and value 0xE1. That value is probably a size or weight, but it isn't confirmed.
+
+The first base header (129 bytes) also contains a named list `0x0BF4` with 5 entries (names 0x0BF5–0x0BF9 = values 1–5). It's probably a global variable with named states, but that's not confirmed.
 
 ## Object record
 
