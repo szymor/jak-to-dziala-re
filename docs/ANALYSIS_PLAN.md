@@ -46,7 +46,7 @@ Decisions, updated with what the analysis showed:
 
 - **Screen:** a 640×480 logical surface. Page area at (94, 4), nav template at (0, 0), frame strips as decoded. Scale to the window with `SDL_SetRenderLogicalPresentation`.
 - **Pixels:** keep an 8-bit indexed framebuffer with the single global palette, converted to an RGBA texture on change. It's faithful and simple, and needs no palette animation (the palette fades are unused).
-- **Pop-ups:** a stack of panels. Each pop-up has an 8-px title strip above its bitmap (the original used tiny child windows). Action 1 opens a new pop-up (the previous one closes), action 3 changes the page in place (the base window, or the pop-up of the same template), a click outside closes it, and action 13 closes it.
+- **Pop-ups:** a stack of panels. Each pop-up has an 8-px title strip above its bitmap (the original used tiny child windows). Action 1 stacks a new pop-up, action 3 changes the page in place (the base window, or the pop-up of the same template), a click outside the top pop-up closes pop-ups down the stack until it lands in one, and action 13 closes one.
 - **Transitions:** none (the original shows none). Optional later; the 19 effects are documented.
 - **Animation and sound sync:** the audio clock is the master. The ANI's PCM goes into an `SDL_AudioStream`, and the displayed frame is `floor(played_samples × fps / rate)`, corrected for the device latency SDL reports. Frames are never dropped on a modern machine. See the note below on frame rate.
 - **Sound effects:** WAV through an `SDL_AudioStream`. One medium (sound or animation) at a time; while one plays, a click on an ordinary hotspot only stops it (the hotspot flags decide; see docs/formats/dkmm.md), so no mixing is needed.

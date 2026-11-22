@@ -94,9 +94,15 @@ struct Game {
     int hover_hand;
 
     /* A-Z dial (class 4 regions + the page's dial table) */
-    int dial_sel, dial_armed;
-    Dib exe_ok_lit;            /* EXE bitmap 172: yellow "OK" when a letter is selected */
+    int dial_sel, dial_pressed;
+    int dial_lamp, dial_phase; /* OK lamp: -1 not drawn yet, 1 yellow, 0 red; next phase */
+    Uint64 dial_next_ns;       /* next lamp toggle (a 1 s timer, FUN_1048_e1c8 / FUN_1048_e302) */
+    Dib exe_ok_lit;            /* EXE bitmap 172: yellow "OK" */
     int have_ok_lit;
+    Dib exe_ok_dark;           /* EXE bitmap 173: red "OK" */
+    int have_ok_dark;
+    Dib exe_ok_pressed;        /* EXE bitmap 352: the whole OK button pressed, drawn when OK is clicked */
+    int have_ok_pressed;
 
     /* EXE bitmaps named by the data with an '@' prefix (button images), colour-mapped */
     struct { char name[24]; Dib dib; int ok; } exe_bmp[16];
@@ -107,6 +113,7 @@ struct Game {
     ScrollBar sb[4];
     int nsb;
     int press_sb, press_part;
+    int btn_obj, btn_k, btn_in, btn_release;   /* bitmap button held down (classes 15, 16) */
     int mouse_x, mouse_y;
     Uint64 press_next_ns;
     Font *font;
@@ -124,6 +131,8 @@ struct Game {
 
 #define DIAL_OK_X 334          /* where the original draws EXE bitmaps 172/173 on the A-Z page */
 #define DIAL_OK_Y 350
+#define DIAL_PRESSED_X 320     /* FUN_1048_dcfa draws EXE bitmap 352 here on OK */
+#define DIAL_PRESSED_Y 331
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -281,15 +290,30 @@ static const Dib *exe_bitmap(Game *g, uint16_t ref)
     return g->exe_bmp[i].ok ? &g->exe_bmp[i].dib : NULL;
 }
 
-/* Bitmap buttons (classes 15, 16) are drawn from their EXE images at the hotspot rectangle. */
-static void draw_buttons(Game *g, const DkObject *o, int ox, int oy)
+/* The A-Z dial's blinking OK lamp (EXE bitmaps 172 yellow / 173 red at page (334, 350)). */
+static void draw_dial_lamp(Game *g)
+{
+    if (g->dial_pressed || g->dial_lamp < 0)
+        return;
+    const Dib *lamp = g->dial_lamp ? (g->have_ok_lit ? &g->exe_ok_lit : NULL)
+                                   : (g->have_ok_dark ? &g->exe_ok_dark : NULL);
+    if (lamp) {
+        blit_clipped(g->screen, lamp, g->page_rect.x + DIAL_OK_X, g->page_rect.y + DIAL_OK_Y, g->page_rect);
+        g->screen->dirty = 1;
+    }
+}
+
+/* Bitmap buttons (classes 15, 16) are drawn from their EXE images at the hotspot rectangle:
+ * the 'in' image while held down with the pointer on it (FUN_1010_204c / FUN_1010_2210). */
+static void draw_buttons(Game *g, int obj, const DkObject *o, int ox, int oy)
 {
     Rect all = {0, 0, SCREEN_W, SCREEN_H};
     for (int k = 0; k < o->nchild; k++) {
         const DkChild *c = &o->children[k];
         if (c->cls != 15 && c->cls != 16)
             continue;
-        const Dib *d = exe_bitmap(g, c->images[0]);
+        int in = g->btn_obj == obj && g->btn_k == k && g->btn_in;
+        const Dib *d = exe_bitmap(g, c->images[in]);
         if (d)
             blit_clipped(g->screen, d, ox + c->rect[0], oy + c->rect[1], all);
     }
@@ -549,8 +573,11 @@ static void compose(Game *g)
             if (d)
                 blit_clipped(s, d, g->frame_rect[k].x, g->frame_rect[k].y, g->frame_rect[k]);
         }
-    if (page && page->ntable && g->dial_armed && g->have_ok_lit)
-        blit_clipped(s, &g->exe_ok_lit, g->page_rect.x + DIAL_OK_X, g->page_rect.y + DIAL_OK_Y, g->page_rect);
+    if (page && page->ntable)
+        draw_dial_lamp(g);
+    if (page && page->ntable && g->dial_pressed && g->have_ok_pressed)
+        blit_clipped(s, &g->exe_ok_pressed, g->page_rect.x + DIAL_PRESSED_X, g->page_rect.y + DIAL_PRESSED_Y,
+                     g->page_rect);
     for (int p = 0; p < g->npopups; p++) {
         DkObject *o = object(g, g->popups[p]);
         if (!o)
@@ -570,7 +597,7 @@ static void compose(Game *g)
         if (d)
             blit_clipped(s, d, r.x, r.y + STRIP_H, all);
         fill(s, r.x, r.y + STRIP_H, r.w, 1, SYS_BLACK);       /* line under the strip (over the first row) */
-        draw_buttons(g, o, r.x, r.y + STRIP_H);
+        draw_buttons(g, g->popups[p], o, r.x, r.y + STRIP_H);
         if (p == g->npopups - 1) {
             widgets_setup(g);
             draw_widgets(g, o, r.x, r.y + STRIP_H);
@@ -645,7 +672,7 @@ static int media_wav(Game *g, const char *path)
 static void run_events(Game *g, int obj, const DkEvent *ev, int n, uint16_t which);
 static void options_function(Game *g, int n);
 static void idx_ok(Game *g);
-enum { OPEN_NEW, OPEN_REPLACE_TOP, OPEN_IN_PLACE };
+enum { OPEN_NEW, OPEN_IN_PLACE };
 static void open_object(Game *g, uint32_t target, int mode);
 
 static void set_page_layout(Game *g, const DkObject *o)
@@ -666,8 +693,11 @@ static void enter_page(Game *g, int target)
     SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "page %d", target);
     g->page = target;
     g->npopups = 0;
-    g->dial_sel = 0;              /* verified: the dial starts at A, not armed */
-    g->dial_armed = 0;
+    g->dial_sel = 0;              /* the dial panel is rebuilt on each visit: back to A (verified) */
+    g->dial_pressed = 0;
+    g->dial_lamp = -1;            /* the lamp first lights (yellow) after 1 s, then alternates */
+    g->dial_phase = 1;
+    g->dial_next_ns = SDL_GetTicksNS() + 1000000000ull;
     set_page_layout(g, o);
     g->dirty = 1;
     compose(g);
@@ -708,14 +738,16 @@ static void go_back(Game *g)
         enter_page(g, g->history[--g->nhistory]);
 }
 
-/* OPEN_NEW: a new pop-up on top. OPEN_REPLACE_TOP: action 1 (OPENPAGE) from a pop-up - the
- * original opens a new window and the old one closes (observed: Options -> mammoth stories).
+/* OPEN_NEW: action 1 (OPENPAGE, FUN_1010_344a) - a new window on top of the others (verified:
+ * a glossary pop-up opened from a zoom pop-up stacks over it); nothing happens if the target is
+ * already open, or if its template is single-instance (only the help template, 0x09CB, in this
+ * data) and a window of that template is open.
  * OPEN_IN_PLACE: action 3 (CHANGEPAGE, FUN_1028_2a42) - the page changes inside the open window
  * of the target's template (pop-up -> pop-up links always stay within one template), which keeps
- * its position (verified on the help pages). */
+ * its position (verified on the help pages and a glossary "Patrz też" link). */
 static void open_object(Game *g, uint32_t target, int mode)
 {
-    int replace_popup = mode != OPEN_NEW;
+    int replace_popup = 0;
     DkObject *o = object(g, (int)target);
     if (!o)
         return;
@@ -723,11 +755,15 @@ static void open_object(Game *g, uint32_t target, int mode)
         navigate(g, (int)target);
         return;
     }
+    if (mode == OPEN_NEW)
+        for (int p = 0; p < g->npopups; p++) {
+            DkObject *po = object(g, g->popups[p]);
+            if (g->popups[p] == (int)target || (o->tmpl && po && po->tmpl == o->tmpl))
+                return;
+        }
     media_stop(g);
-    /* Help pages share one window (verified): a pop-up of the same non-default template as the
-     * top pop-up takes its place and position, whatever position it declares. */
     int keep_x = 0, keep_y = 0, keep = 0;
-    if (g->npopups && (o->tmpl || mode == OPEN_IN_PLACE)) {
+    if (g->npopups && mode == OPEN_IN_PLACE) {
         DkObject *topo = object(g, g->popups[g->npopups - 1]);
         if (topo && topo->tmpl == o->tmpl) {
             keep = 1;
@@ -738,14 +774,6 @@ static void open_object(Game *g, uint32_t target, int mode)
     }
     if (replace_popup && g->npopups)
         g->npopups--;
-    for (int p = 0; p < g->npopups; p++)       /* already open: bring to top */
-        if (g->popups[p] == (int)target) {
-            memmove(g->popups + p, g->popups + p + 1, (size_t)(g->npopups - p - 1) * sizeof *g->popups);
-            memmove(g->pop_x + p, g->pop_x + p + 1, (size_t)(g->npopups - p - 1) * sizeof *g->pop_x);
-            memmove(g->pop_y + p, g->pop_y + p + 1, (size_t)(g->npopups - p - 1) * sizeof *g->pop_y);
-            g->npopups--;
-            break;
-        }
     if (g->npopups == MAX_POPUPS)
     {
         memmove(g->popups, g->popups + 1, (MAX_POPUPS - 1) * sizeof *g->popups);
@@ -804,7 +832,7 @@ static void run_action(Game *g, int obj, const DkAction *a)
     char path[256];
     int ox, oy;
     switch (a->type) {
-    case 1: open_object(g, arg32(a), OPEN_REPLACE_TOP); break;      /* OPENPAGE */
+    case 1: open_object(g, arg32(a), OPEN_NEW); break;              /* OPENPAGE: a new window */
     case 3: open_object(g, arg32(a), OPEN_IN_PLACE); break;         /* CHANGEPAGE: page, or pop-up in place */
     case 2:                                                         /* (re)start animation element */
         for (int k = 0; k < o->nchild; k++)
@@ -1165,14 +1193,14 @@ static void click_dial(Game *g, int obj, const DkObject *o, int value)
         return;
     if (value < n) {
         g->dial_sel = value;
-        g->dial_armed = 1;
     } else if (value == n) {
         g->dial_sel = (g->dial_sel + n - 1) % n;
-        g->dial_armed = 1;
     } else if (value == n + 1) {
         g->dial_sel = (g->dial_sel + 1) % n;
-        g->dial_armed = 1;
     } else {
+        /* OK (FUN_1048_dcfa): stop the lamp timer, draw the pressed button, then the needle */
+        g->dial_pressed = 1;
+        compose(g);
         uint32_t target = o->table_targets[g->dial_sel];
         char path[256];
         resolve(g, o->dir, o->table_anims[g->dial_sel], ".ANI", path, sizeof path);
@@ -1192,6 +1220,13 @@ static void click_child(Game *g, int obj, int k)
 {
     DkObject *o = object(g, obj);
     const DkChild *c = &o->children[k];
+    if ((c->cls == 15 || c->cls == 16) && !g->btn_release) {   /* push button: acts on release */
+        g->btn_obj = obj;
+        g->btn_k = k;
+        g->btn_in = 1;
+        g->dirty = 1;
+        return;
+    }
     if (c->cls == 4) {
         click_dial(g, obj, o, c->ntail >= 3 ? c->tail[2] : 0);
         return;
@@ -1280,7 +1315,9 @@ void game_click(Game *g, int x, int y)
         return;
     }
 deliver:
-    if (g->npopups) {
+    /* A click outside the top pop-up closes it, and so on down the stack until the click is inside
+     * one or none is left; then it goes on (verified with a glossary pop-up over a zoom pop-up). */
+    while (g->npopups) {
         int top = g->popups[g->npopups - 1];
         DkObject *o = object(g, top);
         if (o && in_rect(popup_rect(g, o), x, y)) {
@@ -1291,7 +1328,7 @@ deliver:
                 click_child(g, top, k);
             return;
         }
-        g->npopups--;                     /* a click outside closes the pop-up, then goes on */
+        g->npopups--;
         g->dirty = 1;
         compose(g);
     }
@@ -1321,6 +1358,17 @@ deliver:
 
 void game_mouse_up(Game *g)
 {
+    if (g->btn_obj >= 0) {                      /* FUN_1010_210c: click only if released on the button */
+        int obj = g->btn_obj, k = g->btn_k, in = g->btn_in;
+        g->btn_obj = -1;
+        g->btn_in = 0;
+        g->dirty = 1;
+        if (in && object(g, obj)) {
+            g->btn_release = 1;
+            click_child(g, obj, k);
+            g->btn_release = 0;
+        }
+    }
     if (g->press_part != PART_NONE)
         g->dirty = 1;
     g->press_part = PART_NONE;
@@ -1330,6 +1378,14 @@ void game_motion(Game *g, int x, int y)
 {
     g->mouse_x = x;
     g->mouse_y = y;
+    if (g->btn_obj >= 0) {
+        int obj = g->btn_obj;
+        int in = g->npopups && g->popups[g->npopups - 1] == obj && hotspot_at(g, obj, x, y) == g->btn_k;
+        if (in != g->btn_in) {
+            g->btn_in = in;
+            g->dirty = 1;
+        }
+    }
     if (g->press_part == PART_THUMB && g->npopups && g->press_sb < g->nsb) {   /* drag: thumb centred on the pointer */
         DkObject *o = object(g, g->popups[g->npopups - 1]);
         Rect pr = popup_rect(g, o);
@@ -1425,6 +1481,16 @@ int game_popup(const Game *g) { return g->npopups ? g->popups[g->npopups - 1] : 
 
 void game_update(Game *g)
 {
+    DkObject *dial = object(g, g->page);
+    if (dial && dial->ntable && !g->dial_pressed && SDL_GetTicksNS() >= g->dial_next_ns) {
+        g->dial_lamp = g->dial_phase;          /* FUN_1048_e302: 172 when the phase is 1, else 173 */
+        g->dial_phase ^= 1;
+        g->dial_next_ns += 1000000000ull;
+        if (!g->npopups)
+            draw_dial_lamp(g);                 /* repaint only the lamp, like the original */
+        else
+            g->dirty = 1;
+    }
     if (g->press_part != PART_NONE && g->press_part != PART_THUMB) {   /* held: repeat while on the part */
         Uint64 now = SDL_GetTicksNS();
         if (now >= g->press_next_ns && g->npopups && g->press_sb < g->nsb) {
@@ -1475,6 +1541,7 @@ Game *game_create(Vfs *vfs, Screen *screen, SDL_AudioDeviceID audio, char *err, 
     g->screen = screen;
     g->audio = audio;
     g->page = -1;
+    g->btn_obj = -1;
     size_t size;
     g->png = vfs_read(vfs, "DKCODE/TWTW.PNG", &size);
     if (!g->png || dkmm_open(&g->dk, g->png, size, err, errlen) != 0) {
@@ -1546,6 +1613,18 @@ Game *game_create(Vfs *vfs, Screen *screen, SDL_AudioDeviceID audio, char *err, 
         if (bmp && dib_decode(bmp, bl, &g->exe_ok_lit, derr, sizeof derr) == 0) {
             remap_to_screen(screen, &g->exe_ok_lit);
             g->have_ok_lit = 1;
+        }
+        free(bmp);
+        bmp = ne_bitmap_bmp(&g->ne, 173, NULL, &bl);
+        if (bmp && dib_decode(bmp, bl, &g->exe_ok_dark, derr, sizeof derr) == 0) {
+            remap_to_screen(screen, &g->exe_ok_dark);
+            g->have_ok_dark = 1;
+        }
+        free(bmp);
+        bmp = ne_bitmap_bmp(&g->ne, 352, NULL, &bl);
+        if (bmp && dib_decode(bmp, bl, &g->exe_ok_pressed, derr, sizeof derr) == 0) {
+            remap_to_screen(screen, &g->exe_ok_pressed);
+            g->have_ok_pressed = 1;
         }
         free(bmp);
         NeCursor c;
@@ -1687,6 +1766,10 @@ void game_destroy(Game *g)
         SDL_DestroyCursor(g->hand);
     if (g->have_ok_lit)
         dib_free(&g->exe_ok_lit);
+    if (g->have_ok_dark)
+        dib_free(&g->exe_ok_dark);
+    if (g->have_ok_pressed)
+        dib_free(&g->exe_ok_pressed);
     font_close(g->font);
     for (int i = 0; i < g->nexe_bmp; i++)
         if (g->exe_bmp[i].ok)

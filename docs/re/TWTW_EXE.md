@@ -112,6 +112,14 @@ FUN_1048_4314 fills the enum globals from the name table: actions 1–14 at 1060
 - OPENPAGE (FUN_1010_344a): no-op if the target is open; for single-instance templates (+0x96 of the template record) no-op if a window of that template is open; else a new window (FUN_1010_3640).
 - CHANGEPAGE (FUN_1028_2a42): finds the open window whose template matches the target's and replaces its page in place (MoveWindow keeps it on screen); an error box if there is none. Both page actions look up a per-target kind (FUN_1008_7e8a) and, for kinds 0x11/0x12, play an animation or a sound named in a table at DGROUP:0x150 first (not seen in the data's use so far; not ported).
 
+## Windows, buttons and the A–Z dial
+
+- Windows (FUN_1048_8de6 → `CreateWindow`): the main window has style 0x02CA0000 (caption, system menu, minimise box, clip children); panels are `DKPenge` children (0x50000000); pop-up windows take their style from the window object (FUN_1028_cc1c → FUN_1030_661e), sized bitmap + template shadow. The framework window procedure (1048:cb24) handles create, destroy, paint, timer, mouse move/down/up and private messages; everything non-client goes to `DefWindowProc`, so Windows draws the pop-up strip.
+- Pop-ups are owned by the window that was active when they opened (FUN_1058_0c8e, FUN_1008_1b64); closing one (Closepage, FUN_1028_0a84 → FUN_1048_63d6) re-activates its owner.
+- Shadow: FUN_1028_dc3e, `PatBlt` with PATAND (0x00A000C9) and a checkered pattern brush, width from the template record.
+- Bitmap buttons (`Button` 1058:0ab4, `CollButton` 1050:53ea): mouse down shows the `in` image (and with flag 4 stops media), moving shows it only while over the button, mouse up fires the click event if released over it.
+- A–Z dial (`AZDial`, vtable 1048:e4e2; constructor at 1048:dcc8 clears selection, playing and the picture flag): open (FUN_1048_e1c8) plays a sound and starts a 1000 ms timer; each tick (FUN_1048_e302) draws EXE bitmap 172 or 173 at (334, 350) and flips the phase; a dial region click (FUN_1048_e5a2 → FUN_1048_dcfa) sets the selection or, for OK, kills the timer, draws EXE bitmap 352 at (320, 331) and plays the letter's needle animation.
+
 ## Options screen functions
 
 - **Kopiuj aktywne okno** (copy active window), 1028:76D2: captures the current view and puts it on the clipboard as a bitmap and a palette. On Windows 3.x it also adds a DIB (format 8). The port can use `SDL_SetClipboardData` with a BMP/PNG of the 640×480 frame.
@@ -119,6 +127,6 @@ FUN_1048_4314 fills the enum globals from the name table: actions 1–14 at 1060
 
 ## Behaviour notes from the runtime sessions
 
-- A click on a page hotspot outside an open pop-up first closes the pop-up (in one frame), then runs the hotspot's action.
+- A click outside the top pop-up closes it, and so on down the stack, until the click lands inside a pop-up or none is left; then it runs as usual (verified with a glossary pop-up over a zoom pop-up).
 - A click on the title moves on through its full-screen flag-1 hotspot, not by "skipping" the animation (stopping never fires event 6); see docs/formats/dkmm.md for the click rules. (Earlier notes claimed the title ignored clicks, the Workshop looped idle animations, and a click skipped auto-play with event 6; all three were wrong.)
 - There is no idle animation loop on the hub pages (verified with traces).
