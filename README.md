@@ -2,7 +2,7 @@
 
 A reimplementation of the player for DK's *The Way Things Work* (Polish edition *Jak to działa?*, 1996) in C17 on SDL3. The port reads **your own copy** of the original CD (the ISO image or an extracted copy). No game data is included in this repository.
 
-Status: milestone 4 of [the plan](docs/ANALYSIS_PLAN.md) — all sections play: Workshop, articles, principles, timeline, inventors, A–Z dial, glossary, mammoth stories. Not yet: the Index search screen, help scrolling and the Options functions (milestone 5). The file formats and the original's behaviour are documented in [`docs/`](docs).
+Status: milestones 1–6 of [the plan](docs/ANALYSIS_PLAN.md) are done — every section, the Index, help and Options screens play, with the original's rules taken from its code (`docs/re/TWTW_EXE.md`) and checked against the running original. The file formats and the original's behaviour are documented in [`docs/`](docs).
 
 ## Build
 
@@ -22,13 +22,29 @@ cmake --build build
 build/twtw "Jak To Działa.iso"
 ```
 
-`DATA` can be the `.iso` file or a directory with the extracted CD. Mouse as in the original; Backspace = back, Esc = stop sound/animation or close a pop-up, F11 = fullscreen.
+`DATA` can be the `.iso` file or a directory with the extracted CD. It is remembered: later, `build/twtw` alone starts with the same data, and if no data was ever given, a file dialog asks for the CD image. Options (also remembered): `--fullscreen` / `--windowed`, `--integer-scale` (whole-pixel scaling) / `--smooth-scale`. The settings live in SDL's preferences folder (`~/.local/share/twtw/Jak to dziala/settings.cfg` on Linux).
+
+Mouse as in the original. The original has no keyboard shortcuts apart from the Index screen (typing, caret keys, Up/Down/Page Up/Page Down/Home/End, Enter); the port adds Backspace = Wróć, Esc = stop sound/animation or close the top pop-up, and F11 or Alt+Enter = fullscreen.
 
 ```bash
 build/twtw --viewer "Jak To Działa.iso" AIRP0M1A
 ```
 
 opens the bitmap/animation browser instead (Left/Right, Page Up/Down, Home/End, Space replay). For testing, `--page N` starts the game at object `N` of TWTW.PNG, and `SDL_LOGGING=app=debug` logs page, pop-up and media changes.
+
+## Install and packages
+
+```bash
+cmake --install build --prefix ~/.local
+```
+
+installs `twtw`, `twtw-tool`, the README and (on Linux) a desktop entry.
+
+```bash
+cd build && cpack
+```
+
+makes `.tar.gz` / `.zip` archives of the same files (they need SDL3 and SDL3_ttf on the system). No game data is ever installed or packaged.
 
 ## Checks
 

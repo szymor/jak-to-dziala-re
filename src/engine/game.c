@@ -15,12 +15,23 @@
 #define BITMAP_CACHE 48
 #define STRIP_H 8              /* pop-up title strip (the original used tiny child windows) */
 
-/* Default nav-bar functions, in the order of the template's target list. */
-enum { NAV_WORKSHOP, NAV_PRINCIPLES, NAV_AZ, NAV_INVENTORS, NAV_TIMELINE, NAV_OPTIONS, NAV_STORIES, NAV_INDEX,
-       NAV_HELP, NAV_BACK };
-/* Nav buttons top to bottom -> function (verified by clicking each in the original). */
-static const int nav_button_function[9] = {NAV_WORKSHOP, NAV_AZ, NAV_PRINCIPLES, NAV_TIMELINE, NAV_INVENTORS,
-                                           NAV_BACK, NAV_INDEX, NAV_OPTIONS, NAV_HELP};
+/* Named cursors (FUN_1048_13b6); an element's cursor name is matched case-insensitively
+ * (FUN_1030_27ba, _fstricmp): Normal and Arrow = EXE cursor 157 (the game's arrow), Hand = EXE
+ * cursor 107, IBeam and Watch = the system I-beam and hourglass. */
+enum { CUR_NORMAL, CUR_ARROW, CUR_HAND, CUR_IBEAM, CUR_WATCH };
+static const char *const cursor_names[5] = {"Normal", "Arrow", "Hand", "IBeam", "Watch"};
+
+/* Nav buttons (FUN_1048_ebfc): the clicked button's id is looked up in the nav template's id list;
+ * its position there (the slot) picks a fixed handler. The template's target list is in article-link
+ * order (Workshop, principles, A-Z, inventors, timeline, Options, mammoth stories, Index, Help).
+ * Slot 0 Workshop; 1-4 A-Z, principles, timeline, inventors (the article's link 1, 0, 3, 2 if it has
+ * links, else the template target); 5 Back; 6 Index; 7 Help; 8 Options. */
+enum { NAV_SLOT_WORKSHOP, NAV_SLOT_AZ, NAV_SLOT_PRINCIPLES, NAV_SLOT_TIMELINE, NAV_SLOT_INVENTORS,
+       NAV_SLOT_BACK, NAV_SLOT_INDEX, NAV_SLOT_HELP, NAV_SLOT_OPTIONS, NAV_SLOTS };
+static const struct { int target, link; } nav_slot[NAV_SLOTS] = {
+    {0, -1}, {2, 1}, {1, 0}, {4, 3}, {3, 2}, {-1, -1}, {7, -1}, {8, -1}, {5, -1},
+};
+#define NAV_TARGET_STORIES 6     /* closed with Options before Options reopens (FUN_1048_ee8c) */
 
 typedef struct Rect {
     int x, y, w, h;
@@ -90,8 +101,8 @@ struct Game {
     int dirty;
     CachedDib cache[BITMAP_CACHE];
     int cache_next;
-    SDL_Cursor *hand;
-    int hover_hand;
+    SDL_Cursor *cursor[5];     /* the EXE's named cursors (FUN_1048_13b6), see cursor_names */
+    int hover_cursor;
 
     /* A-Z dial (class 4 regions + the page's dial table) */
     int dial_sel, dial_pressed;
@@ -122,7 +133,8 @@ struct Game {
     /* Index screen (class 12 edit field + class 13 list) */
     int idx_edit, idx_list, idx_sb;    /* child / scroll bar indices, -1 if not present */
     char idx_text[128];                /* CP1250 */
-    int idx_selall, idx_sel, idx_top;
+    int idx_anchor, idx_caret;          /* edit selection [anchor, caret) in bytes; equal = none */
+    int idx_sel, idx_top;
     Uint64 idx_last_click_ns;
     int idx_last_row;
 };
@@ -439,7 +451,7 @@ static void widgets_setup(Game *g)
     }
     if (g->idx_list >= 0) {
         g->idx_text[0] = 0;
-        g->idx_selall = 0;
+        g->idx_anchor = g->idx_caret = 0;
         g->idx_sel = -1;
         g->idx_top = 0;
         g->idx_last_click_ns = 0;
@@ -498,15 +510,22 @@ static void draw_index(Game *g, const DkObject *o, int ox, int oy)
         const uint16_t *e = o->children[g->idx_edit].rect;
         Clip c = {ox + e[0] + 1, oy + e[1] + 1, e[2] - e[0] - 2, e[3] - e[1] - 2};
         int ty = oy + e[1] + (e[3] - e[1] - font_line(g->font)) / 2;
-        size_t n = cp1250_to_utf8(g->idx_text, strlen(g->idx_text), utf8, sizeof utf8);
-        int w = font_width(g->font, utf8, n);
-        /* text from the field's left edge; the caret is 2 px wide (CreateCaret, FUN_1028_5b8a),
-         * at the end of the text (matches the original's screenshots) */
+        /* text from the field's left edge; the caret is 2 px wide (CreateCaret, FUN_1028_5b8a) */
         int tx = ox + e[0];
-        if (g->idx_selall && n)
-            fill(s, tx, ty, w, font_line(g->font), g->col_sel_bg);
-        font_draw(g->font, s, utf8, n, tx, ty, c, g->idx_selall ? g->col_sel_fg : g->col_fg);
-        fill(s, tx + w, ty, 2, font_line(g->font), g->col_fg);
+        size_t n = cp1250_to_utf8(g->idx_text, strlen(g->idx_text), utf8, sizeof utf8);
+        font_draw(g->font, s, utf8, n, tx, ty, c, g->col_fg);
+        int a = g->idx_anchor < g->idx_caret ? g->idx_anchor : g->idx_caret;
+        int b = g->idx_anchor < g->idx_caret ? g->idx_caret : g->idx_anchor;
+        char pre[512];
+        size_t pa = cp1250_to_utf8(g->idx_text, (size_t)a, pre, sizeof pre);
+        int xa = tx + font_width(g->font, pre, pa);
+        if (b > a) {                                     /* the selection, yellow (style 0x0BE3) */
+            size_t ns = cp1250_to_utf8(g->idx_text + a, (size_t)(b - a), pre, sizeof pre);
+            fill(s, xa, ty, font_width(g->font, pre, ns), font_line(g->font), g->col_sel_bg);
+            font_draw(g->font, s, pre, ns, xa, ty, c, g->col_sel_fg);
+        }
+        size_t pc = cp1250_to_utf8(g->idx_text, (size_t)g->idx_caret, pre, sizeof pre);
+        fill(s, tx + font_width(g->font, pre, pc), ty, 2, font_line(g->font), g->col_fg);
     }
     if (g->idx_list >= 0) {
         const uint16_t *l = o->children[g->idx_list].rect;
@@ -722,18 +741,16 @@ static void navigate(Game *g, int target)
 {
     if (target == g->page && !g->npopups)
         return;
-    if (g->page >= 0 && g->nhistory < MAX_HISTORY)
+    if (g->page >= 0 && target != g->page && g->nhistory < MAX_HISTORY)   /* no repeated entries */
         g->history[g->nhistory++] = g->page;
     enter_page(g, target);
 }
 
+/* Back (FUN_1048_ed80 -> FUN_1048_965c): the history holds base pages only (the frame's listener at
+ * 1048:2746 records the base page after every CHANGEPAGE); Back changes to the previous one, and
+ * does nothing at the bottom. Pop-ups go with the page change. */
 static void go_back(Game *g)
 {
-    if (g->npopups) {             /* a pop-up open: close it first */
-        g->npopups--;
-        g->dirty = 1;
-        return;
-    }
     if (g->nhistory > 0)
         enter_page(g, g->history[--g->nhistory]);
 }
@@ -864,22 +881,44 @@ static void run_events(Game *g, int obj, const DkEvent *ev, int n, uint16_t whic
                 run_action(g, obj, &ev[i].actions[k]);
 }
 
-static void nav_function(Game *g, int fn)
+/* "Go to" (FUN_1010_53d2): a base page is changed to (CHANGEPAGE), anything else opens in a new
+ * window (OPENPAGE); a window already showing the target is dropped first (FUN_1010_31b6). */
+static void nav_goto(Game *g, uint32_t target)
 {
-    if (fn == NAV_BACK) {
+    close_object(g, (int)target);
+    DkObject *o = object(g, (int)target);
+    open_object(g, target, o && o->type == 2 ? OPEN_IN_PLACE : OPEN_NEW);
+}
+
+static void nav_function(Game *g, int slot)
+{
+    if (slot < 0 || slot >= NAV_SLOTS)
+        return;
+    if (slot == NAV_SLOT_BACK) {
         go_back(g);
         return;
     }
-    uint32_t target = g->nav_targets[fn];
-    /* machine articles override the four section buttons with their own links */
-    DkObject *page = object(g, g->page);
-    if (page && page->type != 0 && page->nlinks > 0 && page->links) {
-        if (fn == NAV_PRINCIPLES) target = page->links[0][0];
-        if (fn == NAV_AZ) target = page->links[0][1];
-        if (fn == NAV_INVENTORS) target = page->links[0][2];
-        if (fn == NAV_TIMELINE) target = page->links[0][3];
-    }
-    open_object(g, target, 0);
+    uint32_t target = g->nav_targets[nav_slot[slot].target];
+    DkObject *page = object(g, g->page);           /* machine articles override slots 1-4 */
+    if (nav_slot[slot].link >= 0 && page && page->type != 0 && page->nlinks > 0 && page->links)
+        target = page->links[0][nav_slot[slot].link];
+    if (slot == NAV_SLOT_OPTIONS)                  /* Options: close Options and the stories first */
+        close_object(g, (int)g->nav_targets[NAV_TARGET_STORIES]);
+    nav_goto(g, target);
+}
+
+/* The slot of nav button b (top to bottom): its id's position in the template's id list. */
+static int nav_slot_of(Game *g, int b)
+{
+    DkObject *nav = object(g, g->nav_obj);
+    if (!nav)
+        return -1;
+    for (int i = 0, n = 0; i < nav->nchild; i++)
+        if (nav->children[i].cls == 6 && n++ == b)
+            for (int s = 0; s < nav->nlinks && s < NAV_SLOTS; s++)
+                if (nav->tlinks[s][0] == nav->children[i].id)
+                    return s;
+    return -1;
 }
 
 static void media_finished(Game *g)
@@ -950,7 +989,8 @@ static void idx_select(Game *g, const DkObject *o, int i)
         len = sizeof g->idx_text - 1;
     memcpy(g->idx_text, t, len);
     g->idx_text[len] = 0;
-    g->idx_selall = 1;
+    g->idx_anchor = 0;                 /* the entry copied into the field, all selected */
+    g->idx_caret = (int)len;
     idx_show(g, o);
 }
 
@@ -1343,9 +1383,9 @@ deliver:
         resolve(g, 0, nav->children[k].file, ".ANI", path, sizeof path);
         if (media_ani(g, path, g->nav_panel.x, g->nav_panel.y) == 0) {   /* grow animation, then go */
             g->media.end = END_NAV;
-            g->media.end_nav = nav_button_function[b];
+            g->media.end_nav = nav_slot_of(g, b);
         } else {
-            nav_function(g, nav_button_function[b]);
+            nav_function(g, nav_slot_of(g, b));
         }
         return;
     }
@@ -1396,7 +1436,7 @@ void game_motion(Game *g, int x, int y)
             sb_set(g, o, b, ((y - 8 - r.y - 16) * b->range * 2 / travel + 1) >> 1);
         return;
     }
-    int hand = 0, obj = -1, k = -1;
+    int cur = CUR_NORMAL, obj = -1, k = -1;
     if (g->npopups) {
         int top = g->popups[g->npopups - 1];
         DkObject *o = object(g, top);
@@ -1404,15 +1444,17 @@ void game_motion(Game *g, int x, int y)
             obj = top, k = hotspot_at(g, top, x, y);
     }
     if (obj < 0 && nav_button_at(g, x, y) >= 0)
-        hand = 1;
+        cur = CUR_HAND;                                  /* the nav buttons' cursor is Hand */
     else if (obj < 0 && in_rect(g->page_rect, x, y))
         obj = g->page, k = hotspot_at(g, g->page, x, y);
     if (k >= 0) {
         size_t n;
-        const char *cur = dkmm_string(&g->dk, object(g, obj)->children[k].cursor, &n);
-        hand = cur && n == 4 && !SDL_strncasecmp(cur, "Hand", 4);
+        const char *name = dkmm_string(&g->dk, object(g, obj)->children[k].cursor, &n);
+        for (int i = 0; name && i < 5; i++)
+            if (n == strlen(cursor_names[i]) && !SDL_strncasecmp(name, cursor_names[i], n))
+                cur = i;
     }
-    g->hover_hand = hand;
+    g->hover_cursor = cur;
 }
 
 int game_text_wanted(const Game *g)
@@ -1420,60 +1462,93 @@ int game_text_wanted(const Game *g)
     return g->npopups && g->widget_obj == g->popups[g->npopups - 1] && g->idx_edit >= 0;
 }
 
+/* Deletes the edit selection; returns 1 if there was one. */
+static int idx_cut(Game *g)
+{
+    int a = g->idx_anchor < g->idx_caret ? g->idx_anchor : g->idx_caret;
+    int b = g->idx_anchor < g->idx_caret ? g->idx_caret : g->idx_anchor;
+    if (b <= a)
+        return 0;
+    memmove(g->idx_text + a, g->idx_text + b, strlen(g->idx_text + b) + 1);
+    g->idx_anchor = g->idx_caret = a;
+    return 1;
+}
+
+/* Typing (the edit box, FUN_1050_397a): replaces the selection, inserts at the caret. */
 void game_text(Game *g, const char *utf8)
 {
     if (!game_text_wanted(g))
         return;
     char add[64];
     utf8_to_cp1250(utf8, add, sizeof add);
-    if (g->idx_selall)
-        g->idx_text[0] = 0;
-    g->idx_selall = 0;
-    SDL_strlcat(g->idx_text, add, sizeof g->idx_text);
+    idx_cut(g);
+    size_t n = strlen(g->idx_text), k = strlen(add);
+    if (n + k >= sizeof g->idx_text)
+        return;
+    memmove(g->idx_text + g->idx_caret + k, g->idx_text + g->idx_caret, n - (size_t)g->idx_caret + 1);
+    memcpy(g->idx_text + g->idx_caret, add, k);
+    g->idx_caret += (int)k;
+    g->idx_anchor = g->idx_caret;
     idx_search(g, object(g, g->widget_obj));
 }
 
-static int index_key(Game *g, SDL_Keycode key)
+/* Index keys. The edit box (FUN_1050_397a, FUN_1050_2fc0): Backspace/Delete remove the selection or
+ * one character; Left/Right/Home/End move the caret (Ctrl+Left/Right = Home/End), Shift extends the
+ * selection. The list controller (FUN_1050_91ce) gets the same keys: Enter = OK, Up/Down one entry,
+ * Page Up/Down one page of visible rows, Home/End the first/last entry. */
+static int index_key(Game *g, SDL_Keycode key, SDL_Keymod mod)
 {
     DkObject *o = object(g, g->widget_obj);
-    size_t n = strlen(g->idx_text);
-    int rows = idx_rows(g, o);
+    int n = (int)strlen(g->idx_text), rows = idx_rows(g, o);
+    int shift = (mod & SDL_KMOD_SHIFT) != 0, ctrl = (mod & SDL_KMOD_CTRL) != 0;
+    int caret = -1;
     switch (key) {
     case SDLK_BACKSPACE:
-        if (g->idx_selall)
-            n = 0;
-        else if (n)
-            n--;
-        g->idx_text[n] = 0;
-        g->idx_selall = 0;
+    case SDLK_DELETE:
+        if (!idx_cut(g)) {
+            int at = key == SDLK_BACKSPACE ? g->idx_caret - 1 : g->idx_caret;
+            if (at < 0 || at >= n)
+                return 1;
+            memmove(g->idx_text + at, g->idx_text + at + 1, (size_t)(n - at));
+            g->idx_anchor = g->idx_caret = at;
+        }
         idx_search(g, o);
         return 1;
     case SDLK_RETURN: case SDLK_KP_ENTER: idx_ok(g); return 1;
     case SDLK_DOWN: idx_select(g, o, g->idx_sel + 1); return 1;
     case SDLK_UP: idx_select(g, o, g->idx_sel < 0 ? 0 : g->idx_sel - 1); return 1;
-    case SDLK_PAGEDOWN: idx_select(g, o, g->idx_sel + rows - 1); return 1;
-    case SDLK_PAGEUP: idx_select(g, o, g->idx_sel - rows + 1); return 1;
-    case SDLK_HOME: if (g->idx_selall || !n) { idx_select(g, o, 0); return 1; } return 0;
-    case SDLK_END: if (g->idx_selall || !n) { idx_select(g, o, idx_count(g) - 1); return 1; } return 0;
+    case SDLK_PAGEDOWN: idx_select(g, o, g->idx_sel + rows); return 1;
+    case SDLK_PAGEUP: idx_select(g, o, g->idx_sel - rows); return 1;
+    case SDLK_LEFT: caret = ctrl ? 0 : g->idx_caret - 1; break;
+    case SDLK_RIGHT: caret = ctrl ? n : g->idx_caret + 1; break;
+    case SDLK_HOME: idx_select(g, o, 0); n = (int)strlen(g->idx_text); caret = 0; break;
+    case SDLK_END: idx_select(g, o, idx_count(g) - 1); n = (int)strlen(g->idx_text); caret = n; break;
     default: return 0;
     }
+    g->idx_caret = caret < 0 ? 0 : caret > n ? n : caret;
+    if (!shift)
+        g->idx_anchor = g->idx_caret;
+    g->dirty = 1;
+    return 1;
 }
 
-void game_key(Game *g, SDL_Keycode key)
+void game_key(Game *g, SDL_Keycode key, SDL_Keymod mod)
 {
-    if (!g->media.kind && game_text_wanted(g) && index_key(g, key))
+    if (!g->media.kind && game_text_wanted(g) && index_key(g, key, mod))
         return;
     if (key == SDLK_BACKSPACE || key == SDLK_ESCAPE) {
         if (g->media.kind)
             media_stop(g);
-        else if (key == SDLK_ESCAPE && g->npopups)
-            go_back(g);
+        else if (key == SDLK_ESCAPE && g->npopups) {
+            g->npopups--;
+            g->dirty = 1;
+        }
         else if (key == SDLK_BACKSPACE)
             go_back(g);
     }
 }
 
-SDL_Cursor *game_cursor(Game *g) { return g->hover_hand ? g->hand : NULL; }
+SDL_Cursor *game_cursor(Game *g) { return g->cursor[g->hover_cursor]; }
 int game_page(const Game *g) { return g->page; }
 int game_popup(const Game *g) { return g->npopups ? g->popups[g->npopups - 1] : -1; }
 
@@ -1627,16 +1702,21 @@ Game *game_create(Vfs *vfs, Screen *screen, SDL_AudioDeviceID audio, char *err, 
             g->have_ok_pressed = 1;
         }
         free(bmp);
-        NeCursor c;
-        if (ne_cursor(&g->ne, 107, &c) == 0) {
+        static const int ids[3] = {157, 157, 107};        /* Normal, Arrow, Hand */
+        for (int i = 0; i < 3; i++) {
+            NeCursor c;
+            if (ne_cursor(&g->ne, ids[i], &c) != 0)
+                continue;
             SDL_Surface *s = SDL_CreateSurfaceFrom(c.width, c.height, SDL_PIXELFORMAT_ARGB8888, c.rgba, c.width * 4);
             if (s) {
-                g->hand = SDL_CreateColorCursor(s, c.hot_x, c.hot_y);
+                g->cursor[i] = SDL_CreateColorCursor(s, c.hot_x, c.hot_y);
                 SDL_DestroySurface(s);
             }
             ne_cursor_free(&c);
         }
     }
+    g->cursor[CUR_IBEAM] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_TEXT);
+    g->cursor[CUR_WATCH] = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_WAIT);
     return g;
 }
 
@@ -1762,8 +1842,9 @@ void game_destroy(Game *g)
     for (int i = 0; i < BITMAP_CACHE; i++)
         if (g->cache[i].ok)
             dib_free(&g->cache[i].dib);
-    if (g->hand)
-        SDL_DestroyCursor(g->hand);
+    for (int i = 0; i < 5; i++)
+        if (g->cursor[i])
+            SDL_DestroyCursor(g->cursor[i]);
     if (g->have_ok_lit)
         dib_free(&g->exe_ok_lit);
     if (g->have_ok_dark)

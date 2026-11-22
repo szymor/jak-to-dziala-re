@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Jak to działa?
+GenericName=The Way Things Work (CD player)
+Comment=Plays your copy of the 1996 Polish CD-ROM "Jak to działa?"
+Exec=twtw %f
+Icon=applications-education
+Terminal=false
+Categories=Education;Science;
+MimeType=application/x-cd-image;

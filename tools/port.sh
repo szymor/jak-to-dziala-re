@@ -11,6 +11,7 @@
 # The debug log (pages, pop-ups, media) goes to work/port.log.
 # The window is 1280x960, centred on the 1600x1200 screen at (160, 120).
 export DISPLAY=:78 SDL_VIDEO_DRIVER=x11 SDL_AUDIO_DRIVER=dummy
+export XDG_DATA_HOME="$(cd "$(dirname "$0")/.." && pwd)/work/xdg"   # keep test settings out of the user profile
 unset WAYLAND_DISPLAY
 R=$(cd "$(dirname "$0")/.." && pwd)
 T=${TMPDIR:-/tmp}

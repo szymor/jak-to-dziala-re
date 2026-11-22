@@ -24,7 +24,7 @@ void game_mouse_up(Game *g);
 void game_text(Game *g, const char *utf8);
 /* True while a text field has the focus (the app should enable SDL text input). */
 int game_text_wanted(const Game *g);
-void game_key(Game *g, SDL_Keycode key);
+void game_key(Game *g, SDL_Keycode key, SDL_Keymod mod);
 
 /* Advances media and timers; composes the screen when needed. */
 void game_update(Game *g);

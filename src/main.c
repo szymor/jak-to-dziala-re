@@ -1,10 +1,15 @@
 /* twtw: the Jak to działa? player.
  *
- *   twtw DATA [--page N]          play (from the title, or from object N for testing)
+ *   twtw [DATA] [--page N] [--fullscreen | --windowed] [--integer-scale | --smooth-scale]
  *   twtw --viewer DATA [NAME]     browse bitmaps and animations
  *
- * DATA is the CD image (.iso) or a directory with the extracted CD.
- * Keys while playing: Backspace back, Esc stop media / close pop-up, F11 fullscreen.
+ * DATA is the CD image (.iso) or a directory with the extracted CD. Without DATA the last one
+ * used is taken from the settings file; the first time, a file dialog asks for the CD image.
+ * Display options given on the command line are remembered.
+ *
+ * The original has no keyboard shortcuts (its window procedures and main loop handle no keys;
+ * only the Index screen's edit field and list take keys). Port additions: Backspace = the Wróć
+ * button, Esc = stop sound/animation or close the top pop-up, F11 or Alt+Enter = fullscreen.
  */
 #define SDL_MAIN_USE_CALLBACKS 1
 #include <SDL3/SDL.h>
@@ -12,6 +17,7 @@
 
 #include "engine/game.h"
 #include "platform/screen.h"
+#include "platform/settings.h"
 #include "viewer.h"
 #include "vfs/vfs.h"
 
@@ -28,6 +34,11 @@ typedef struct App {
     void *viewer;
     SDL_Cursor *cursor_shown;
     int cursor_set;
+    int page;
+    Settings settings;
+    /* file dialog result (the callback may run on another thread) */
+    SDL_AtomicInt dialog_state;         /* 0 none, 1 waiting, 2 chosen, 3 cancelled */
+    char dialog_path[1024];
 } App;
 
 static void show_error(const char *title, const char *msg)
@@ -36,25 +47,72 @@ static void show_error(const char *title, const char *msg)
     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, title, msg, NULL);
 }
 
+static void apply_display(App *app)
+{
+    SDL_SetRenderLogicalPresentation(app->renderer, SCREEN_W, SCREEN_H,
+                                     app->settings.integer_scale ? SDL_LOGICAL_PRESENTATION_INTEGER_SCALE
+                                                                 : SDL_LOGICAL_PRESENTATION_LETTERBOX);
+    SDL_SetWindowFullscreen(app->window, app->settings.fullscreen);
+}
+
+/* Opens the data and starts the game; 0 on success. */
+static int start_game(App *app, const char *data)
+{
+    char err[256];
+    app->vfs = vfs_open(data, err, sizeof err);
+    if (!app->vfs) {
+        show_error("Cannot open game data", err);
+        return -1;
+    }
+    if (screen_init(&app->screen, app->renderer) != 0) {
+        show_error("SDL_CreateTexture", SDL_GetError());
+        return -1;
+    }
+    app->game = game_create(app->vfs, &app->screen, app->audio, err, sizeof err);
+    if (!app->game) {
+        show_error("Cannot load the game", err);
+        return -1;
+    }
+    SDL_strlcpy(app->settings.data, data, sizeof app->settings.data);   /* remember what worked */
+    settings_save(&app->settings);
+    game_start(app->game, app->page);
+    return 0;
+}
+
+static void SDLCALL dialog_done(void *userdata, const char *const *files, int filter)
+{
+    (void)filter;
+    App *app = userdata;
+    if (files && files[0]) {
+        SDL_strlcpy(app->dialog_path, files[0], sizeof app->dialog_path);
+        SDL_SetAtomicInt(&app->dialog_state, 2);
+    } else {
+        SDL_SetAtomicInt(&app->dialog_state, 3);
+    }
+}
+
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 {
-    SDL_SetAppMetadata("Jak to działa?", "0.3", "org.twtw.port");
-    int viewer = 0, page = -1;
+    SDL_SetAppMetadata("Jak to działa?", "0.6", "org.twtw.port");
+    int viewer = 0, page = -1, fullscreen = -1, integer = -1;
     const char *data = NULL, *name = NULL;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--viewer"))
             viewer = 1;
         else if (!strcmp(argv[i], "--page") && i + 1 < argc)
             page = atoi(argv[++i]);
+        else if (!strcmp(argv[i], "--fullscreen"))
+            fullscreen = 1;
+        else if (!strcmp(argv[i], "--windowed"))
+            fullscreen = 0;
+        else if (!strcmp(argv[i], "--integer-scale"))
+            integer = 1;
+        else if (!strcmp(argv[i], "--smooth-scale"))
+            integer = 0;
         else if (!data)
             data = argv[i];
         else
             name = argv[i];
-    }
-    if (!data) {
-        show_error("Jak to działa?", "Usage: twtw DATA [--page N]\n       twtw --viewer DATA [NAME]\n"
-                                     "DATA is the CD image (.iso) or an extracted CD directory.");
-        return SDL_APP_FAILURE;
     }
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         show_error("SDL_Init", SDL_GetError());
@@ -64,19 +122,18 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
     if (!app)
         return SDL_APP_FAILURE;
     *appstate = app;
+    app->page = page;
+    settings_load(&app->settings);
+    if (fullscreen >= 0)
+        app->settings.fullscreen = fullscreen;
+    if (integer >= 0)
+        app->settings.integer_scale = integer;
 
-    char err[256];
-    app->vfs = vfs_open(data, err, sizeof err);
-    if (!app->vfs) {
-        show_error("Cannot open game data", err);
-        return SDL_APP_FAILURE;
-    }
     if (!SDL_CreateWindowAndRenderer("Jak to działa?", SCREEN_W * 2, SCREEN_H * 2, SDL_WINDOW_RESIZABLE,
                                      &app->window, &app->renderer)) {
         show_error("SDL_CreateWindowAndRenderer", SDL_GetError());
         return SDL_APP_FAILURE;
     }
-    SDL_SetRenderLogicalPresentation(app->renderer, SCREEN_W, SCREEN_H, SDL_LOGICAL_PRESENTATION_LETTERBOX);
     SDL_SetRenderVSync(app->renderer, 1);
     if (SDL_InitSubSystem(SDL_INIT_AUDIO))
         app->audio = SDL_OpenAudioDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, NULL);
@@ -84,19 +141,30 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
         SDL_LogWarn(SDL_LOG_CATEGORY_AUDIO, "no audio device (%s); playing silently", SDL_GetError());
 
     if (viewer) {
+        if (!data) {
+            show_error("Jak to działa?", "Usage: twtw --viewer DATA [NAME]");
+            return SDL_APP_FAILURE;
+        }
+        char err[256];
+        app->vfs = vfs_open(data, err, sizeof err);
+        if (!app->vfs) {
+            show_error("Cannot open game data", err);
+            return SDL_APP_FAILURE;
+        }
+        SDL_SetRenderLogicalPresentation(app->renderer, SCREEN_W, SCREEN_H, SDL_LOGICAL_PRESENTATION_LETTERBOX);
         app->viewer = viewer_create(app->window, app->renderer, app->audio, app->vfs, name);
         return app->viewer ? SDL_APP_CONTINUE : SDL_APP_FAILURE;
     }
-    if (screen_init(&app->screen, app->renderer) != 0) {
-        show_error("SDL_CreateTexture", SDL_GetError());
-        return SDL_APP_FAILURE;
-    }
-    app->game = game_create(app->vfs, &app->screen, app->audio, err, sizeof err);
-    if (!app->game) {
-        show_error("Cannot load the game", err);
-        return SDL_APP_FAILURE;
-    }
-    game_start(app->game, page);
+    apply_display(app);
+    if (!data && app->settings.data[0])
+        data = app->settings.data;
+    if (data)
+        return start_game(app, data) == 0 ? SDL_APP_CONTINUE : SDL_APP_FAILURE;
+
+    /* first run: ask for the CD image */
+    static const SDL_DialogFileFilter filters[] = {{"CD image (*.iso)", "iso"}, {"All files", "*"}};
+    SDL_SetAtomicInt(&app->dialog_state, 1);
+    SDL_ShowOpenFileDialog(dialog_done, app, app->window, filters, 2, NULL, false);
     return SDL_APP_CONTINUE;
 }
 
@@ -105,12 +173,18 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
     App *app = appstate;
     if (event->type == SDL_EVENT_QUIT)
         return SDL_APP_SUCCESS;
-    if (event->type == SDL_EVENT_KEY_DOWN && event->key.key == SDLK_F11) {
-        SDL_SetWindowFullscreen(app->window, !(SDL_GetWindowFlags(app->window) & SDL_WINDOW_FULLSCREEN));
+    if (event->type == SDL_EVENT_KEY_DOWN &&
+        (event->key.key == SDLK_F11 || (event->key.key == SDLK_RETURN && (event->key.mod & SDL_KMOD_ALT)))) {
+        app->settings.fullscreen = !(SDL_GetWindowFlags(app->window) & SDL_WINDOW_FULLSCREEN);
+        SDL_SetWindowFullscreen(app->window, app->settings.fullscreen);
+        if (!app->viewer)
+            settings_save(&app->settings);
         return SDL_APP_CONTINUE;
     }
     if (app->viewer)
         return viewer_event(app->viewer, event) ? SDL_APP_CONTINUE : SDL_APP_SUCCESS;
+    if (!app->game)
+        return SDL_APP_CONTINUE;
     SDL_ConvertEventToRenderCoordinates(app->renderer, event);
     switch (event->type) {
     case SDL_EVENT_MOUSE_BUTTON_DOWN:
@@ -128,7 +202,7 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
         game_text(app->game, event->text.text);
         break;
     case SDL_EVENT_KEY_DOWN:
-        game_key(app->game, event->key.key);
+        game_key(app->game, event->key.key, event->key.mod);
         break;
     default:
         break;
@@ -143,6 +217,15 @@ SDL_AppResult SDL_AppIterate(void *appstate)
     SDL_RenderClear(app->renderer);
     if (app->viewer) {
         viewer_iterate(app->viewer);
+    } else if (!app->game) {
+        int st = SDL_GetAtomicInt(&app->dialog_state);
+        if (st == 3)
+            return SDL_APP_SUCCESS;              /* the dialog was cancelled */
+        if (st == 2) {
+            SDL_SetAtomicInt(&app->dialog_state, 0);
+            if (start_game(app, app->dialog_path) != 0)
+                return SDL_APP_FAILURE;
+        }
     } else {
         game_update(app->game);
         screen_present(&app->screen, app->renderer);
@@ -166,6 +249,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 
 void SDL_AppQuit(void *appstate, SDL_AppResult result)
 {
+    (void)result;
     App *app = appstate;
     if (!app)
         return;
