@@ -42,12 +42,14 @@ jobs:
           if [ "${{ matrix.name }}" = windows-x86_64 ]; then
             sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix
           else
-            # Headers SDL needs to build its video/audio back ends (it loads the libraries at run time).
+            # Headers SDL needs to build its video/audio back ends (it loads the libraries at run time):
+            # SDL's own list for Ubuntu 22.04+ (docs/README-linux.md, "Build Dependencies").
             sudo apt-get install -y --no-install-recommends \
+              libasound2-dev libpulse-dev libaudio-dev libfribidi-dev libjack-dev libsndio-dev \
               libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev \
-              libxkbcommon-dev libwayland-dev wayland-protocols libegl1-mesa-dev libgl1-mesa-dev \
-              libdrm-dev libgbm-dev libasound2-dev libpulse-dev libpipewire-0.3-dev libdbus-1-dev \
-              libudev-dev libibus-1.0-dev libdecor-0-dev
+              libxtst-dev libxkbcommon-dev libdrm-dev libgbm-dev libgl1-mesa-dev libgles2-mesa-dev \
+              libegl1-mesa-dev libdbus-1-dev libibus-1.0-dev libudev-dev libthai-dev libusb-1.0-0-dev \
+              libpipewire-0.3-dev libwayland-dev wayland-protocols libdecor-0-dev liburing-dev
           fi
 
       - name: Configure
