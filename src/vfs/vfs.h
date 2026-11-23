@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Read-only virtual file system over the original game data.
  *
  * The source is either the CD image (an ISO 9660 file) or a directory that

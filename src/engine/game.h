@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* The game engine: pages, pop-ups, hotspots, actions and media, driven by
  * TWTW.PNG (docs/formats/dkmm.md) and the behaviour verified in the original. */
 #ifndef TWTW_GAME_H

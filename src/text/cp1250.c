@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* CP1250 (Windows Central European) <-> UTF-8, and the Polish sort key used by the index.
  * Tables generated from Python's cp1250 codec (see tools/check notes in docs/formats/dkmm.md). */
 #include "text/cp1250.h"

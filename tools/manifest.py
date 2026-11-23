@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Inventory of the extracted "Jak to działa" CD.
 
 Usage: python3 -I tools/manifest.py work/cd docs/inventory/manifest.csv

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* The 640x480 8-bit indexed screen with one global palette, shown through an SDL texture. */
 #ifndef TWTW_SCREEN_H
 #define TWTW_SCREEN_H

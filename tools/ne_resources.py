@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Extract the resources of a Win16 NE executable (TWTW.EXE).
 
 Usage: python3 -I tools/ne_resources.py work/cd/DKCODE/TWTW.EXE work/res

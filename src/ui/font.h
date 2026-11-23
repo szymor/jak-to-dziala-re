@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Runtime text (only the Index screen draws text): the original used "Times New Roman CE";
  * we use it if the user has it, else a metric-compatible serif (Liberation Serif, Tinos,
  * TeX Gyre Termes). Text is drawn without antialiasing, like Windows 3.1. */

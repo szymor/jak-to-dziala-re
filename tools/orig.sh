@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Drive the original TWTW.EXE headlessly: Wine inside an Xvfb display, xdotool for input.
 #
 #   tools/orig.sh start            start Xvfb + the app (waits for the main window)

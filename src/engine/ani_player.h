@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Plays an ANI on the screen with its sound, using the audio clock as the master.
  *
  * All PCM is queued into an SDL_AudioStream at start. The frame to show is

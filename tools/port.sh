@@ -1,4 +1,5 @@
 #!/bin/bash
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Drive the port headless on Xvfb :78 (X11 video, dummy audio) for tests.
 #
 #   tools/port.sh start [twtw args]    e.g. tools/port.sh start --page 104

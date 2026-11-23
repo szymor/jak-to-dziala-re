@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "vfs/vfs.h"
 #include "vfs/vfs_internal.h"
 

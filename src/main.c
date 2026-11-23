@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* twtw: the Jak to działa? player.
  *
  *   twtw [DATA] [--page N] [--fullscreen | --windowed] [--integer-scale | --smooth-scale]

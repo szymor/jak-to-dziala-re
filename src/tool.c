@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* twtw-tool: headless checks and dumps for the port's loaders.
  *
  *   twtw-tool ls DATA                  list files (DATA = .iso or extracted directory)

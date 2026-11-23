@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Unpack the MS COMPRESS (SZDD) files from DKCODE/ (*.??_) for reference.
 
 Only the 5 WinG files are SZDD; the other *.??_ files (VfW 1.1 / OLE2 runtime)

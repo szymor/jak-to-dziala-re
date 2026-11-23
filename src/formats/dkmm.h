@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* TWTW.PNG: the compiled DKMM page file (see docs/formats/dkmm.md).
  *
  * dkmm_open() parses the header, string pool, template section, index table

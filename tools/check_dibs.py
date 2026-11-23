@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Compare the port's DIB decoder (twtw-tool dump-dibs output) with Pillow.
 
 Usage: python3 -I tools/check_dibs.py work/cd work/dibdump

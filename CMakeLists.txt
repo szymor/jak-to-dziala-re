@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 cmake_minimum_required(VERSION 3.20)
 project(twtw VERSION 0.6.0 LANGUAGES C)
 
@@ -43,7 +44,7 @@ target_link_libraries(twtw-tool PRIVATE twtw_core)
 # No game data is installed or packaged; the user points the player at their own CD image.
 include(GNUInstallDirs)
 install(TARGETS twtw twtw-tool RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
-install(FILES README.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
+install(FILES README.md LICENSE DESTINATION ${CMAKE_INSTALL_DOCDIR})
 if(UNIX AND NOT APPLE)
   install(FILES packaging/twtw.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
 endif()
@@ -51,6 +52,7 @@ endif()
 set(CPACK_PACKAGE_NAME twtw)
 set(CPACK_PACKAGE_VENDOR "twtw port")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Player for the 1996 CD-ROM 'Jak to dziala?' (The Way Things Work), C/SDL3 port")
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
 set(CPACK_GENERATOR TGZ ZIP)
 set(CPACK_SOURCE_GENERATOR TGZ)
 set(CPACK_SOURCE_IGNORE_FILES "/build/;/work/;/third_party/;/\\.git/;\\.iso$")

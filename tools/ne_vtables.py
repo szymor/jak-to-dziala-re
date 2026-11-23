@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Find C++ virtual tables in a 16-bit MSVC NE executable.
 
 The tables sit in code segments as runs of 4-byte far pointers (offset, segment

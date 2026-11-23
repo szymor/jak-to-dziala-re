@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* CP1250 text helpers: the game's strings are Windows-1250. */
 #ifndef TWTW_CP1250_H
 #define TWTW_CP1250_H

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Reader for DKCODE/TWTW.PNG, the compiled ("scrunged") DKMM page file.
 See docs/formats/dkmm.md for the layout. All object records but one (the
 Index screen's list box), the template section and the index table decode

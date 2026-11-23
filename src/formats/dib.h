@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Windows DIB/BMP reader: 8-bit RLE8 or uncompressed 1/4/8-bit (the CD bitmaps and the EXE's UI bitmaps). */
 #ifndef TWTW_DIB_H
 #define TWTW_DIB_H

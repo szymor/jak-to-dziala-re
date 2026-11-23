@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Bitmap/animation viewer mode (twtw --viewer DATA [NAME]). */
 #ifndef TWTW_VIEWER_H
 #define TWTW_VIEWER_H

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Bitmap and animation viewer (twtw --viewer DATA [NAME]).
  *
  * DATA is the CD image (.iso) or a directory with the extracted CD. NAME

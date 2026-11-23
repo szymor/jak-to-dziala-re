@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Resources of a Win16 NE executable (TWTW.EXE): the UI bitmaps and the hand cursor
  * are loaded from the user's own copy at run time. See docs/formats/exe_resources.md. */
 #ifndef TWTW_NE_RES_H

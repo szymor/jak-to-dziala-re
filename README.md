@@ -38,7 +38,7 @@ opens the bitmap/animation browser instead (Left/Right, Page Up/Down, Home/End, 
 cmake --install build --prefix ~/.local
 ```
 
-installs `twtw`, `twtw-tool`, the README and (on Linux) a desktop entry.
+installs `twtw`, `twtw-tool`, the README, the license and (on Linux) a desktop entry.
 
 ```bash
 cd build && cpack
@@ -106,3 +106,9 @@ writes the EXE's 41 UI bitmaps (byte-identical to `tools/ne_resources.py` output
 | `src/tool.c` | `twtw-tool`, headless checks and dumps |
 | `tools/` | Python reference readers and analysis scripts |
 | `docs/` | analysis, format specs, reverse-engineering notes |
+
+## License
+
+The port's code, tools and documentation are free software: you can redistribute them and/or modify them under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version. See [LICENSE](LICENSE).
+
+The license covers this repository only. *Jak to działa?* / *The Way Things Work* and its content (pictures, animations, sounds, texts and the original program) belong to their copyright holders and are not part of this project; the player needs your own copy of the CD.

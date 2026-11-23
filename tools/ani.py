@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """Reader for the DK "funky!" ANI animation format (see docs/formats/ani.md).
 
 Usage:

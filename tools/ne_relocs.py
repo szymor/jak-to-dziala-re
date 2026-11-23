@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-3.0-or-later
 """List NE relocation records that point at a given segment:offset (internal references).
 
 Usage: python3 -I tools/ne_relocs.py TWTW.EXE SEG OFFSET

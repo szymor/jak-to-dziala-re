@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Minimal ISO 9660 reader: primary volume descriptor and the directory tree.
  * Only what the game CD needs: 2048-byte logical blocks, single-extent files,
  * 8.3 names (the ";1" version suffix is stripped by vfs_normalise). */

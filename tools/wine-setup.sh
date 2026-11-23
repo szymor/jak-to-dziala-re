@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: GPL-3.0-or-later
 # Builds a Wine prefix that runs the original 16-bit TWTW.EXE.
 # Verified with Wine 11.22 (Arch, WoW64 build): it shows the title screen.
 #

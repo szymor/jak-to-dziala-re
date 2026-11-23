@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* DK "funky!" ANI animations (see docs/formats/ani.md).
  *
  * An ANI is a header followed by chunks; each chunk carries a slice of

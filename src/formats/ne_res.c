@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "formats/ne_res.h"
 #include "util/bytes.h"
 

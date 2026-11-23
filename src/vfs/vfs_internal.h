@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 #ifndef TWTW_VFS_INTERNAL_H
 #define TWTW_VFS_INTERNAL_H
 

@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Explicit-endian readers and a small growable buffer. */
 #ifndef TWTW_BYTES_H
 #define TWTW_BYTES_H

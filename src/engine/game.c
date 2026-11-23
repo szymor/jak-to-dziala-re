@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 #include "engine/game.h"
 #include "engine/ani_player.h"
 #include "formats/dib.h"

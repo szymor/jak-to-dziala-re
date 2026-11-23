@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-3.0-or-later */
 /* Persistent user settings: a small "key=value" text file in the SDL preferences folder
  * (e.g. ~/.local/share/twtw/Jak to dziala/settings.cfg on Linux), rewritten on every save.
  * Nothing here affects the game's behaviour, only where its data is and how it is shown. */
