@@ -842,17 +842,6 @@ static void enter_page(Game *g, int target)
     set_page_layout(g, o);
     g->dirty = 1;
     compose(g);
-    if (o->ntable) {
-        /* the A-Z dial panel's open (FUN_1048_e1c8) plays the sound "DIAL" from the page's
-           folder (\AZAZ\DIAL.WAV), then starts the lamp timer */
-        char path[256];
-        size_t dl = 0;
-        const char *dir = dkmm_string(&g->dk, o->dir, &dl);
-        char tmp[256];
-        SDL_snprintf(tmp, sizeof tmp, "%.*sDIAL.WAV", dir ? (int)dl : 0, dir ? dir : "");
-        vfs_normalise(tmp, path, sizeof path);
-        media_wav(g, path);
-    }
     run_events(g, target, o->events, o->nevents, 1);        /* event 1: on open */
     ctl_autoplay(g, target);
     /* auto-play animation (class 7, shape 36): plays now, event 6 when it ends */
@@ -1447,6 +1436,18 @@ static void click_dial(Game *g, int obj, const DkObject *o, int value)
         g->dial_sel = (g->dial_sel + n - 1) % n;
     } else if (value == n + 1) {
         g->dial_sel = (g->dial_sel + 1) % n;
+    }
+    if (value <= n + 1) {
+        /* a letter or an arrow: the needle moves, then the dial's PLAYWAVE action (loaded with
+           "DIAL" when the panel opens, FUN_1048_e1c8) runs: \AZAZ\DIAL.WAV (FUN_1048_dcfa;
+           verified with waveOut traces: one play per click, none on open or OK) */
+        char path[256], tmp[256];
+        size_t dl = 0;
+        const char *dir = dkmm_string(&g->dk, o->dir, &dl);
+        SDL_snprintf(tmp, sizeof tmp, "%.*sDIAL.WAV", dir ? (int)dl : 0, dir ? dir : "");
+        vfs_normalise(tmp, path, sizeof path);
+        g->dirty = 1;
+        media_wav(g, path);
     } else {
         /* OK (FUN_1048_dcfa): stop the lamp timer, draw the pressed button, then the needle */
         g->dial_pressed = 1;
@@ -1573,8 +1574,11 @@ void game_click(Game *g, int x, int y)
         int k, obj = click_target(g, x, y, &k);
         DkObject *o = obj >= 0 ? object(g, obj) : NULL;
         int stops = obj < 0;             /* nav panel / outside a pop-up: stop (verified) */
+        /* A-Z regions (class 4) replace that click handler (slot +0x8c: FUN_1048_e5a2 instead of
+         * FUN_1010_6f0a), so their flags stop nothing and their clicks always reach the dial */
         for (int i = 0; o && i < o->nchild && !stops; i++)
-            if (o->children[i].kind == DK_CHILD_HOTSPOT && (o->children[i].shape & HS_STOPS_MEDIA))
+            if (o->children[i].kind == DK_CHILD_HOTSPOT && o->children[i].cls != 4 &&
+                (o->children[i].shape & HS_STOPS_MEDIA))
                 stops = 1;
         if (!stops)
             goto deliver;
