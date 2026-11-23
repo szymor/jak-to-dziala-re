@@ -2,7 +2,7 @@
 
 A reimplementation of the player for DK's *The Way Things Work* (Polish edition *Jak to działa?*, 1996) in C17 on SDL3. The port reads **your own copy** of the original CD (the ISO image or an extracted copy). No game data is included in this repository.
 
-Status: milestones 1–6 of [the plan](docs/ANALYSIS_PLAN.md) are done — every section, the Index, help and Options screens play, with the original's rules taken from its code (`docs/re/TWTW_EXE.md`) and checked against the running original. The file formats and the original's behaviour are documented in [`docs/`](docs).
+Status: all seven milestones of [the plan](docs/ANALYSIS_PLAN.md) are done — every section, the Index, help and Options screens play, with the original's rules taken from its code (`docs/re/TWTW_EXE.md`) and checked against the running original by a regression harness (below). The file formats and the original's behaviour are documented in [`docs/`](docs).
 
 ## Build
 
@@ -117,7 +117,8 @@ captures the port and compares; the exit status is non-zero if any screen differ
 | `src/vfs/` | read-only file system over the ISO (own ISO 9660 reader) or a directory |
 | `src/formats/` | file format readers: DIB (RLE8, 1/4/8-bit), ANI, TWTW.PNG (DKMM), NE resources of TWTW.EXE |
 | `src/platform/` | the 640×480 indexed screen buffer (shown: the original's 638×459 working area), its SDL texture, the settings file |
-| `src/engine/` | the game engine (`game.c`: pages, pop-ups, actions, media, nav) and the ANI player |
+| `src/engine/` | the game engine (`game.c`: pages, pop-ups, actions, media, nav, widgets) and the ANI player |
+| `src/ui/`, `src/text/`, `src/util/` | the Index font (SDL3_ttf), CP1250 → UTF-8, big-endian readers |
 | `src/main.c`, `src/viewer.c` | the SDL3 application: game mode and viewer mode |
 | `src/tool.c` | `twtw-tool`, headless checks and dumps |
 | `tools/` | Python reference readers and analysis scripts |

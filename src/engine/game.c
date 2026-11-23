@@ -842,6 +842,17 @@ static void enter_page(Game *g, int target)
     set_page_layout(g, o);
     g->dirty = 1;
     compose(g);
+    if (o->ntable) {
+        /* the A-Z dial panel's open (FUN_1048_e1c8) plays the sound "DIAL" from the page's
+           folder (\AZAZ\DIAL.WAV), then starts the lamp timer */
+        char path[256];
+        size_t dl = 0;
+        const char *dir = dkmm_string(&g->dk, o->dir, &dl);
+        char tmp[256];
+        SDL_snprintf(tmp, sizeof tmp, "%.*sDIAL.WAV", dir ? (int)dl : 0, dir ? dir : "");
+        vfs_normalise(tmp, path, sizeof path);
+        media_wav(g, path);
+    }
     run_events(g, target, o->events, o->nevents, 1);        /* event 1: on open */
     ctl_autoplay(g, target);
     /* auto-play animation (class 7, shape 36): plays now, event 6 when it ends */

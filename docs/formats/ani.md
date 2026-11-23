@@ -51,7 +51,7 @@ The decoder stops after `R` bytes. 10 files have frames that decode to `R + 1` b
 
 ### Compositing
 
-- Each frame is an **opaque rectangle pasted over the previous picture**. There's no transparent colour index and no XOR delta. A frame with `C = 0` leaves the picture unchanged.
+- Each frame is an **opaque rectangle pasted over the previous picture**. There's no XOR delta, and this title uses no transparent colour (the engine has a keyed mode, unused here; see `docs/re/TWTW_EXE.md`). A frame with `C = 0` leaves the picture unchanged.
 - The pixel values are indices into the single global game palette (the same as every DIB, see [inventory](../inventory.md#dib-1704-files-solved)).
 - Coordinates are relative to the animation's placement origin. For the main-page animations (`xxxx0MnA`) that is the page bitmap origin: `AIRP0M1A.ANI` composited over `AIRP0M.DIB` at (0, 0) lines up exactly. For the navigation bar animations (`NAV/NAVB0MnA`) it's the top-left of the 96×400 navigation column. Where each animation is placed comes from the DKMM data (see [dkmm.md](dkmm.md)).
 - Frame 0 of article animations usually repaints a large area, and later frames repaint only the moving part. The last frame of a navigation button animation repaints the whole column, which restores the resting state.

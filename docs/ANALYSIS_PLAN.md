@@ -1,13 +1,13 @@
 # "Jak to działa" (DK *The Way Things Work*, PL, 1996): plan for a C/SDL3 port
 
-Status (2026-11-19): phases 1–4 are done; port milestones 1–4 are done (see §6). Revised after the analysis; the original first-look version is in git history.
+Status (2026-11-23): the analysis phases and all seven port milestones are done (§6), and the review after milestone 7 is closed (§7). The plan was revised after the analysis; the original first-look version is in git history.
 
 ## 0. What we know
 
 | Item | Finding | Spec |
 |---|---|---|
 | Program | `DKCODE/TWTW.EXE`, Win16 NE, MSVC 1.5x **C++** on DK's own framework (not MFC). It contains the whole authoring runtime (text page parser, "Scrunge" compiler, property editor, expression evaluator); the port needs none of it. | [re/TWTW_EXE.md](re/TWTW_EXE.md) |
-| Page data | `DKCODE/TWTW.PNG` = the compiled ("scrunged") page file, big-endian. String pool, window/page templates, an index table of 1320 titles, 1668 object records. **Everything decodes byte-exactly except one list-box object.** | [formats/dkmm.md](formats/dkmm.md) |
+| Page data | `DKCODE/TWTW.PNG` = the compiled ("scrunged") page file, big-endian. String pool, window/page templates, an index table of 1320 titles, 1668 object records. **Everything decodes byte-exactly.** | [formats/dkmm.md](formats/dkmm.md) |
 | Bitmaps | 1703 RLE8 DIBs with **one shared palette** (WinG identity layout). All article text is baked into the pictures. | [inventory.md](inventory.md) |
 | Sound | 100 WAV files, MS-ADPCM / PCM 22 kHz mono. `SDL_LoadWAV` handles both. | [inventory.md](inventory.md) |
 | Animation | 495 `funky!` ANI files: chunks of 8-bit PCM plus byte-RLE dirty rectangles, audio stored 1–2 s ahead. **Decoded completely.** Drawn opaque at the header's fps (5 fps for almost all). | [formats/ani.md](formats/ani.md) |
@@ -23,34 +23,33 @@ Status (2026-11-19): phases 1–4 are done; port milestones 1–4 are done (see 
 | 1. Inventory | done | `docs/inventory.md`, `docs/inventory/manifest.csv`, `tools/manifest.py`, `tools/unpack_szdd.py` |
 | 2. Formats | done | `tools/ani.py`, `tools/dkmm.py`, `tools/ne_resources.py`; specs in `docs/formats/` |
 | 3. Static RE | done for the port's needs | `docs/re/TWTW_EXE.md`; Ghidra project `work/twtw.gpr` (git-ignored) |
-| 4. Dynamic | mostly done | `tools/wine-setup.sh`, `tools/orig.sh` (headless Wine + Xvfb + xdotool); runtime checks are written into the specs. Not done: a systematic reference capture set for regression tests (moved to milestone 7), and sound behaviour (see risks). |
+| 4. Dynamic | done | `tools/wine-setup.sh`, `tools/orig.sh` (headless Wine + Xvfb + xdotool); runtime checks are written into the specs; the reference captures are milestone 7's harness. |
 
 ## 5. Port architecture (C17 + SDL3), revised
 
 ```
 src/
-  main.c            SDL3 app callbacks (SDL_AppInit/Iterate/Event/Quit)
-  platform/         window + renderer (638x459 logical = the original's client area, scaled), audio device, clock
-  vfs/              read the user's ISO directly (small ISO 9660 reader) or an extracted
+  main.c, viewer.c  SDL3 app callbacks (game mode, bitmap/animation viewer); tool.c = twtw-tool
+  platform/         the 640x480 indexed screen (638x459 shown) and its texture; the settings file
+  vfs/              read the user's ISO directly (own ISO 9660 reader) or an extracted
                     directory; case-insensitive lookup
-  formats/          dib.c (RLE8), ani.c, dkmm.c (TWTW.PNG), ne_res.c (bitmaps/cursor from TWTW.EXE)
-  engine/           object store (lazy record parsing), panel stack (page + pop-ups),
-                    hotspot hit testing, event/action dispatch, history, context links,
-                    animation and sound players
-  ui/               widgets that the original took from Windows: pop-up title strip,
-                    scroll view (help), list box + edit field (index), bitmap buttons
-  text/             CP1250 -> UTF-8, rendering for the index list/edit field
+  formats/          dib.c (RLE8), ani.c, dkmm.c (TWTW.PNG), ne_res.c (bitmaps/cursors from TWTW.EXE)
+  engine/           game.c: object store, page + pop-up stack, hotspots, events/actions, media,
+                    history, nav, widgets (pop-up strip, scroll views, Index list/edit, buttons,
+                    animation control, A-Z dial); ani_player.c: audio-clocked ANI playback
+  ui/               font.c: the Index font through SDL3_ttf
+  text/, util/      CP1250 -> UTF-8; big-endian readers
 ```
 
 Decisions, updated with what the analysis showed:
 
 - **Screen:** a 640×480 indexed buffer, of which the original's working area, 638×459, is shown (its main window is 640×480 with a Windows 3.1 caption and thin border; FUN_1010_24f0). Page area at (94, 4), nav template at (0, 0), frame strips as decoded. Scale to the window with `SDL_SetRenderLogicalPresentation`.
 - **Pixels:** keep an 8-bit indexed framebuffer with the single global palette, converted to an RGBA texture on change. It's faithful and simple, and needs no palette animation (the palette fades are unused).
-- **Pop-ups:** a stack of panels. Each pop-up has an 8-px title strip above its bitmap (the original used tiny child windows). Action 1 stacks a new pop-up, action 3 changes the page in place (the base window, or the pop-up of the same template), a click outside the top pop-up closes pop-ups down the stack until it lands in one, and action 13 closes one.
+- **Pop-ups:** a stack of panels. Each pop-up has an 8-px title strip above its bitmap, which the original paints itself (see `docs/formats/dkmm.md`). Action 1 stacks a new pop-up, action 3 changes the page in place (the base window, or the pop-up of the same template), a click outside the top pop-up closes pop-ups down the stack until it lands in one, and action 13 closes one.
 - **Transitions:** none (the original shows none). Optional later; the 19 effects are documented.
 - **Animation and sound sync:** the audio clock is the master. The ANI's PCM goes into an `SDL_AudioStream`, and the displayed frame is `floor(played_samples × fps / rate)`, corrected for the device latency SDL reports. Frames are never dropped on a modern machine. See the note below on frame rate.
 - **Sound effects:** WAV through an `SDL_AudioStream`. One medium (sound or animation) at a time; while one plays, a click on an ordinary hotspot only stops it (the hotspot flags decide; see docs/formats/dkmm.md), so no mixing is needed.
-- **Text:** only the Index screen draws text at runtime (list box + edit field, style `Times New Roman CE`, plus the colours from the template section). We can't ship that font, so use **SDL3_ttf** with a metric-compatible free serif (Liberation Serif or TeX Gyre Termes), letting the user point to their own TNR.
+- **Text:** only the Index screen draws text at runtime (list box + edit field, style `Times New Roman CE`, plus the colours from the template section). We can't ship that font, so **SDL3_ttf** uses Times New Roman when it is installed, else a metric-compatible free serif (Liberation Serif, Tinos or TeX Gyre Termes).
 - **EXE resources:** load the UI bitmaps and the hand cursor from the user's `TWTW.EXE` (`ne_res.c`), so no assets are shipped. The other cursor is the system arrow (`SDL_CreateColorCursor` / `SDL_SYSTEM_CURSOR_DEFAULT`).
 - **Options:** "copy window" → `SDL_SetClipboardData` with a BMP/PNG of the frame. Print → "save page as PNG" (and the system print dialog only if it's ever wanted).
 - **Dropped:** CD/MSCDEX/version checks, the INI data path (replaced by a command-line/config path to the ISO), WinG, and the authoring features.
@@ -73,23 +72,19 @@ Decisions, updated with what the analysis showed:
 4. ✅ **All sections:** principles, inventors, timeline, A–Z dial, glossary links, mammoth stories, context nav buttons. Done: A–Z dial (rules verified in the original), principles hub, timeline, inventors, glossary links, mammoth stories and context nav all run from the data. `twtw-tool selftest` resolves every reference of all 1668 objects and opens all 399 pages and 1265 pop-ups. Pixel checks against the original: timeline, principles and inventors hubs identical; A–Z dial identical (its OK lamp later turned out to blink, see `docs/formats/dkmm.md`); Options and mammoth-stories pop-ups identical apart from Wine's window frame. Fixed on the way: animations with less sound than pictures never finished (nav buttons); EXE button bitmaps and the line under the pop-up strip.
 5. ✅ **Widgets:** help scroll views (class 9 + 10), Index screen (list box with Polish-collation lower-bound search, edit field, scroll bar, OK/Anuluj, Enter), Options (copy to clipboard, print → save PNG). The widget rules come from TWTW.EXE's code (`docs/re/TWTW_EXE.md`, "Object classes and the widget code"): position/pixel rounding, page steps (1 on help pages, trunc(rows × 0.9) in the list), a 300 ms first repeat then 100 ms while the pointer stays on the part, the two-part track, a 2-px caret. Pixel checks: help scrolling (positions 0–3 and a track click) identical apart from Wine's frame; the Index list band, rows and edit-field caret line up with the original (the glyphs differ only because Wine substitutes the font).
 6. ✅ **Polish**, each item from the code first: the nav-button mapping (FUN_1048_ebfc: the id's slot in the template picks the handler) and Back (base pages only); the original's keyboard handling (none outside the Index: the edit box's caret keys with Shift selection, the list's Up/Down/Page/Home/End and Enter), with Esc, Backspace = Wróć and F11/Alt+Enter as marked port additions; the EXE's named cursors (the game's own arrow for `normal`); a settings file (data path, fullscreen, integer scaling) with a file dialog on first run; `cmake --install` and CPack archives.
-7. ✅ **Regression harness:** `tools/regress.py` plays 13 fixed screens (17 since the review: plus an animation's end state, the class-2 control, a dial letter and a hint pop-up) (Workshop, the four hubs, A–Z dial, Options, mammoth stories, battery + zoom pop-up, a stacked glossary pop-up, help contents, a help page and its scrolled state, the Index with typed text) in the original under Wine and in the port, from a fresh launch through the title each time, and compares the client area. Masks cover only Wine's own differences (pop-up title strips, the shadow areas Wine erases white — the code shows the original keeps the picture there) and per-screen items (the blinking A–Z lamp, font-rendered Index text). Result: 13/13 identical; a deliberately wrong shot fails. Found on the way: the "first click after the title is swallowed" note was the harness clicking during the credits, which play over the Workshop picture.
+7. ✅ **Regression harness:** `tools/regress.py` plays 17 fixed screens in the original under Wine and in the port, from a fresh launch through the title each time, and compares the client area: Workshop, the four hubs, A–Z dial, Options, mammoth stories, battery + zoom pop-up, a stacked glossary pop-up, help contents, a help page and its scrolled state, the Index with typed text, and (added in the review) a hint pop-up, an animation's end state, a dial letter and the animation control. Masks cover only Wine's own differences (system colours in pop-up strips, the shadow pixels Wine erases white) and per-screen items (the blinking A–Z lamp, font-rendered Index text). Result: 17/17 identical; a deliberately wrong shot fails. Found on the way: the "first click after the title is swallowed" note was the harness clicking during the credits, which play over the Workshop picture.
 
 ## 7. Risks and open questions (current)
 
-Resolved since the first revision: the Index screen (all classes decode; search = Polish-collation lower bound, verified), sound behaviour (one medium at a time; a click in a window with a flag-4 hotspot stops it, from the code and `waveOut` traces), the nav-button mapping (from the code), and the class-10 scroll bar layout.
-
-Resolved in the review after milestone 7 (each from the code, then checked in the original):
-- **Animation end state:** a finished or stopped animation leaves its window repainted (PLAYPICS, the class-7 rewind flag, FUN_1010_bd50's reset); the port also keeps a playing or paused animation across its own repaints.
-- **Class 2 is a VCR control**, not a bare animation: panel, play/pause, rewind, progress bar, auto-rewind word, and action 2 = "press Play" (`docs/re/TWTW_EXE.md`). The mammoth-story films and 59 article/pop-up animations use it.
-- **A–Z dial:** a letter click shows the needle on that letter (`AZAZ0M?A.DIB` at (161, 101)).
-- **Pop-up title strip:** painted by the program, not by Windows; the port now draws it exactly, in Windows 3.1's default system colours.
-- **Constant fields:** the action 7 fields are named from its loader; all data uses one set of values, whose behaviour is verified. The action 4 fields and the two raw base-template headers stay unnamed; they never vary and the port doesn't need them.
-- **Harness coverage:** the harness now also checks an animation's end state (WIATR), the control panel, a dial letter and a hint pop-up's strip (17 screens). Behaviour *during* playback depends on timing and is checked by the earlier traces and the one-off runs recorded in the docs.
-- **Wine-only observations:** the blank note pop-up was seen once in Wine and never again (not reproduced in any harness or manual run since); frame skipping under Wine is not reproduced by design.
+Resolved, each from the code and checked in the original; the details live in the specs:
+- Index screen, search rule, nav-button mapping, scroll bar: `docs/formats/dkmm.md`, `docs/re/TWTW_EXE.md`.
+- Sound and clicks (one medium at a time, the hotspot flags): `docs/formats/dkmm.md`, *Port notes*.
+- Review after milestone 7: animation end state, the class-2 animation control, the A–Z dial needle and open sound, the program-painted pop-up strip, sound-only hotspots: `docs/formats/dkmm.md` (classes 2, 4, 7, actions 4 and 7, the strip) and `docs/re/TWTW_EXE.md`.
+- Constant fields: the action 4 fields and the two raw base-template headers stay unnamed; they never vary and the port doesn't need them.
+- Wine-only observations: the blank note pop-up was seen once in Wine and never again; frame skipping under Wine is not reproduced by design.
 
 Still open, by nature rather than lack of analysis:
-- **Fonts (low):** the Index uses `Times New Roman CE`, a Windows system font that isn't on the CD. The port uses a metric-compatible serif unless the user supplies TNR, so glyph shapes can differ slightly (rows and layout don't).
+- **Fonts (low):** the Index uses `Times New Roman CE`, a Windows system font that isn't on the CD. Without an installed Times New Roman the port uses a metric-compatible serif, so glyph shapes can differ slightly (rows and layout don't).
 - **System colours (low):** the strip's caption and frame colours come from the user's Windows colour scheme in the original; the port fixes them to Windows 3.1's defaults.
 - **Legal:** the repository holds only code, specs and tools. The ISO, extracted assets and the Ghidra database stay out of git.
 

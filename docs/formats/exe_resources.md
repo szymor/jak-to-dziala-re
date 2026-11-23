@@ -12,8 +12,8 @@ The output goes to `work/res`: `.bmp`/`.cur`/`.ico` files, `STRING.tsv`, `DIALOG
 
 | Type | Count | Notes for the port |
 |---|---:|---|
-| BITMAP | 41 | UI chrome: scroll bar parts (`LINEUP`, `LINEDOWN`, `THUMB`, `THUMBTRACK` and their `…ALT` versions), `OKOUT`/`OKIN`/`CANCLOUT`/`CANCLIN` buttons, numbered pieces 101–174, 1002–1012, 1951/1952, and one 52 KB bitmap (1908). The port must ship these. |
-| CURSOR / GROUP_CURSOR | 2 | 32×32 monochrome. Group 107 has its hotspot at (6, 0) (the hand), group 157 at (0, 0). DKMM records refer to cursor 107. Other cursor names in the data (`normal`, `none`, `zoom`) are probably system cursors or handled in code. |
+| BITMAP | 41 | UI chrome: scroll bar parts (`LINEUP`, `LINEDOWN`, `THUMB`, `THUMBTRACK` and their `…ALT` versions), `OKOUT`/`OKIN`/`CANCLOUT`/`CANCLIN` buttons, numbered pieces 101–174, 1002–1012, 1951/1952, and one 52 KB bitmap (1908). The port loads them from the user's `TWTW.EXE` (`src/formats/ne_res.c`); none are shipped. |
+| CURSOR / GROUP_CURSOR | 2 | 32×32 monochrome. Group 107 has its hotspot at (6, 0) (the hand), group 157 at (0, 0) (the game's arrow). The page data names cursors, not numbers; the EXE's cursor table maps `Hand` to 107 and `Normal`/`Arrow` to 157 (see `docs/re/TWTW_EXE.md`, *Cursors*). |
 | ICON | 1 | App icon (group 1900) |
 | PALETTE | 1 | Resource 1907, 1088 bytes: a LOGPALETTE (probably the identity palette the DIBs use) |
 | DIALOG | 11 | Polish runtime dialogs: CD drive selection (`Wybierz napęd`), printing (`Drukowanie`), About (3011). Authoring/debug dialogs: `Object Properties`, `Object Event Procedure`, `Scrunging...`, `Go to page...`, `Resource Monitor`. |
