@@ -42,6 +42,8 @@ int ani_player_start(AniPlayer *p, uint8_t *file, size_t size, SDL_AudioDeviceID
     return 0;
 }
 
+static Uint64 now_ns(const AniPlayer *p) { return p->paused_ns ? p->paused_ns : SDL_GetTicksNS(); }
+
 double ani_player_time(const AniPlayer *p)
 {
     if (p->stream && !p->drained_ns) {
@@ -51,14 +53,16 @@ double ani_player_time(const AniPlayer *p)
         return played > 0 ? played : 0;
     }
     if (p->drained_ns)
-        return p->drained_at_s + (double)(SDL_GetTicksNS() - p->drained_ns) / 1e9;
-    return (double)(SDL_GetTicksNS() - p->start_ticks_ns) / 1e9;
+        return p->drained_at_s + (double)(now_ns(p) - p->drained_ns) / 1e9;
+    return (double)(now_ns(p) - p->start_ticks_ns) / 1e9;
 }
 
 int ani_player_update(AniPlayer *p, Screen *s)
 {
     if (!p->playing)
         return 0;
+    if (p->paused_ns)
+        return 1;
     if (p->stream && !p->drained_ns && SDL_GetAudioStreamQueued(p->stream) <= 0) {
         p->drained_at_s = (double)p->ani.audio_bytes / p->ani.rate;   /* the device buffer (latency) still plays */
         p->drained_ns = SDL_GetTicksNS();
@@ -82,6 +86,35 @@ int ani_player_update(AniPlayer *p, Screen *s)
         p->playing = 0;
     return p->playing;
 }
+
+void ani_player_pause(AniPlayer *p, int pause)
+{
+    if (!p->playing || !pause == !p->paused_ns)
+        return;
+    if (pause) {
+        p->paused_ns = SDL_GetTicksNS();
+        if (p->stream && !p->drained_ns)
+            SDL_UnbindAudioStream(p->stream);       /* the queued sound waits; the clock stands */
+    } else {
+        Uint64 d = SDL_GetTicksNS() - p->paused_ns;
+        p->start_ticks_ns += d;
+        if (p->drained_ns)
+            p->drained_ns += d;
+        p->paused_ns = 0;
+        if (p->stream && !p->drained_ns)
+            SDL_BindAudioStream(p->device, p->stream);
+    }
+}
+
+void ani_player_redraw(const AniPlayer *p, Screen *s)
+{
+    for (int j = 0; j < p->next_frame && j < p->ani.frames; j++)
+        ani_apply_frame(&p->ani, j, s->pixels, SCREEN_W, SCREEN_H, SCREEN_W, p->ox, p->oy);
+    s->dirty = 1;
+}
+
+int ani_player_position(const AniPlayer *p) { return p->next_frame; }
+int ani_player_frames(const AniPlayer *p) { return p->ani.frames; }
 
 void ani_player_stop(AniPlayer *p)
 {

@@ -81,6 +81,17 @@ SCENARIOS = {
                       [(674, 676)], [], 'help page scrolled two lines'),
     'index_typed': (nav('indeks', 3) + [('type', 'zeg'), ('wait', 1)], [812], [],
                     'Index after typing "zeg" (text areas masked: font)'),
+    'hint_popup': (nav('indeks', 3) + [('type', 'sterowiec'), ('wait', 1), ('key', 'Return'), ('wait', 5),
+                                       ('click', PAGE[0] + 160, PAGE[1] + 360), ('wait', 2.5)],
+                   [47], [], 'airship page with its POWŁOKA hint pop-up'),
+    'wiatr_end': (nav('indeks', 3) + [('type', 'turbina'), ('key', 'space'), ('type', 'w'), ('wait', 1),
+                                      ('key', 'Return'), ('wait', 5), ('click', PAGE[0] + 445, PAGE[1] + 221),
+                                      ('wait', 14)],
+                  [], [], 'wind turbine after its WIATR animation (page repainted at the end)'),
+    'dial_letter': (nav('urzadzenia') + [('click', PAGE[0] + 267, PAGE[1] + 289), ('wait', 2)], [],
+                    [(PAGE[0] + 334, PAGE[1] + 350, 18, 8)], 'A-Z dial after clicking a letter (needle moved)'),
+    'calc_control': (nav('indeks', 3) + [('type', 'kalkulator'), ('wait', 1), ('key', 'Return'), ('wait', 5)],
+                     [], [], 'calculator page with its animation control panel'),
 }
 
 _dk = None
@@ -253,10 +264,17 @@ def masks_for(name):
     shadows = []
     for spec in pops:
         x, y, w, h = popup_rect(spec)
-        m[max(y, 0):max(y + 8, 0), max(x, 0):max(x + w, 0)] = True       # title strip
-        m[max(y + 7, 0):y + 10, max(x, 0):x + 2] = True                  # strip corners
-        m[max(y + 7, 0):y + 10, max(x + w - 2, 0):x + w] = True
-        m[max(y + 8, 0):y + 9, max(x, 0):x + 12] = True                  # Wine's system-box overhang
+        # The title strip is painted by the program (FUN_1028_d588 / FUN_1028_df40) in system
+        # colours: COLOR_WINDOWFRAME for the system box's frame, COLOR_(IN)ACTIVECAPTION inside
+        # the caption. Wine's colours differ from Windows 3.1's (which the port uses); the rest
+        # of the strip (box face, bar, the caption's black outline) is compared.
+        def box(x0, y0, x1, y1):
+            m[max(y0, 0):max(y1, 0), max(x0, 0):max(x1, 0)] = True
+        box(x, y, x + 12, y + 1)                  # frame: top
+        box(x, y, x + 1, y + 9)                   # left
+        box(x + 12, y + 1, x + 13, y + 8)         # right
+        box(x + 1, y + 8, x + 12, y + 9)          # bottom
+        box(x + 13, y + 1, x + w - 1, y + 8)      # caption inside
         shadows.append((x, y, w, h))
     for (x, y, w, h) in extra + (index_masks() if name == 'index_typed' else []):
         m[max(y, 0):y + h, max(x, 0):x + w] = True

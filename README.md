@@ -108,7 +108,7 @@ captures the references once (a few minutes: every screen starts from a fresh la
 python3 -I tools/regress.py run
 ```
 
-captures the port and compares; the exit status is non-zero if any screen differs. Masked out are only the places where Wine itself differs from Windows: pop-up title strips and the white squares Wine paints in pop-up shadows, plus per-screen masks for the blinking A–Z lamp and font-rendered Index text. Results go to `work/regress/` (`report.txt`, and `diff/NAME.png` with differences in magenta, masks in blue). The shots are derived from the game's pictures, so they are never committed.
+captures the port and compares; the exit status is non-zero if any screen differs. Masked out are only the places where Wine itself differs from Windows: the system colours in pop-up title strips (Wine's caption and window-frame colours) and the white squares Wine paints in pop-up shadows, plus per-screen masks for the blinking A–Z lamp and font-rendered Index text. Results go to `work/regress/` (`report.txt`, and `diff/NAME.png` with differences in magenta, masks in blue). The shots are derived from the game's pictures, so they are never committed.
 
 ## Layout
 

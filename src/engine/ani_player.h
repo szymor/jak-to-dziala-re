@@ -29,6 +29,7 @@ typedef struct AniPlayer {
     int ox, oy;                  /* placement origin on the screen */
     int next_frame;              /* next frame index to apply */
     int playing;
+    Uint64 paused_ns;            /* when paused (0 = running); the clock stands still meanwhile */
 } AniPlayer;
 
 /* Takes ownership of 'file'. device may be 0 (no sound). Returns 0 on success. */
@@ -38,6 +39,13 @@ int ani_player_start(AniPlayer *p, uint8_t *file, size_t size, SDL_AudioDeviceID
 int ani_player_update(AniPlayer *p, Screen *s);
 /* Seconds of content played so far (audio clock). */
 double ani_player_time(const AniPlayer *p);
+/* Pauses (1) or resumes (0) picture and sound; the position is kept. */
+void ani_player_pause(AniPlayer *p, int pause);
+/* Re-applies the frames shown so far (after the picture beneath was repainted). */
+void ani_player_redraw(const AniPlayer *p, Screen *s);
+/* Frames shown so far and in total (for a progress bar). */
+int ani_player_position(const AniPlayer *p);
+int ani_player_frames(const AniPlayer *p);
 void ani_player_stop(AniPlayer *p);
 
 #endif

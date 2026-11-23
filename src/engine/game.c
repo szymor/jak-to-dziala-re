@@ -69,7 +69,12 @@ typedef struct Media {
     int end;                   /* what happens when it finishes */
     int end_obj, end_child, end_nav;
     uint32_t end_target;       /* END_OPEN: object to open afterwards */
+    int owner;                 /* ANI: window it plays in (object), OWNER_NAV for the nav panel */
+    int ctl_obj, ctl_k;        /* ANI started by this class-2 control, or -1 */
+    int held;                  /* control without auto-rewind: finished, last frame kept */
 } Media;
+
+#define OWNER_NAV (-2)
 
 struct Game {
     Vfs *vfs;
@@ -126,6 +131,9 @@ struct Game {
     int nsb;
     int press_sb, press_part;
     int btn_obj, btn_k, btn_in, btn_release;   /* bitmap button held down (classes 15, 16) */
+    int ctl_obj, ctl_k, ctl_part;              /* class-2 control button held down */
+    Dib ctl_img[6];            /* EXE bitmaps of the class-2 control, see CTL_* */
+    int ctl_ok[6];
     int mouse_x, mouse_y;
     Uint64 press_next_ns;
     Font *font;
@@ -146,6 +154,20 @@ struct Game {
 #define DIAL_OK_Y 350
 #define DIAL_PRESSED_X 320     /* FUN_1048_dcfa draws EXE bitmap 352 here on OK */
 #define DIAL_PRESSED_Y 331
+#define DIAL_PLATE_X 161       /* FUN_1048_dfc2 draws the selected letter's dial picture here */
+#define DIAL_PLATE_Y 101
+
+/* Class 2 ("AnimationControl", FUN_1048_d5b4): a 74x22 panel with a rewind button at (3, 3), a
+ * play/pause button at (20, 3) and a progress bar at (39, 7), all EXE bitmaps. */
+enum { CTL_PANEL, CTL_PLAY, CTL_PAUSE, CTL_REWIND, CTL_REWIND_START, CTL_BAR };
+static const int ctl_bitmap_id[6] = {101, 116, 119, 117, 115, 118};
+enum { CTL_PART_NONE, CTL_PART_PLAY, CTL_PART_REWIND };
+#define CTL_PLAY_X 20
+#define CTL_PLAY_Y 3
+#define CTL_REWIND_X 3
+#define CTL_REWIND_Y 3
+#define CTL_BAR_X 39
+#define CTL_BAR_Y 7
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -330,6 +352,71 @@ static void draw_buttons(Game *g, int obj, const DkObject *o, int ox, int oy)
         if (d)
             blit_clipped(g->screen, d, ox + c->rect[0], oy + c->rect[1], all);
     }
+}
+
+/* One class-2 control (paint: FUN_1018_76d6). Play shows pause while playing; rewind is bright once
+ * the position is past the start; the bar's image is shown over pos / frames of its width. Each
+ * part is drawn only if the one before it was: the pressed-button images are never loaded (the
+ * constructor at 1018:6eb2 leaves them 0), so a held button shows the panel's own art and the
+ * parts after it are skipped. */
+static void draw_control(Game *g, int obj, int k, int ox, int oy)
+{
+    const DkObject *o = object(g, obj);
+    if (!o || k < 0 || k >= o->nchild || !g->ctl_ok[CTL_PANEL])
+        return;
+    const DkChild *c = &o->children[k];
+    const Media *m = &g->media;
+    Rect all = {0, 0, SCREEN_W, SCREEN_H};
+    int x = ox + c->anim_rect[0], y = oy + c->anim_rect[1];
+    int active = m->kind == 1 && m->ctl_obj == obj && m->ctl_k == k;
+    int playing = active && !m->held && !m->ani.paused_ns;
+    int total = active ? ani_player_frames(&m->ani) : 0;
+    int pos = active ? (m->held ? total : ani_player_position(&m->ani)) : 0;
+    int pressed = g->ctl_obj == obj && g->ctl_k == k ? g->ctl_part : CTL_PART_NONE;
+    blit_clipped(g->screen, &g->ctl_img[CTL_PANEL], x, y, all);
+    g->screen->dirty = 1;
+    int play = playing ? CTL_PAUSE : CTL_PLAY, rew = pos > 0 ? CTL_REWIND : CTL_REWIND_START;
+    if (pressed == CTL_PART_PLAY || !g->ctl_ok[play])
+        return;
+    blit_clipped(g->screen, &g->ctl_img[play], x + CTL_PLAY_X, y + CTL_PLAY_Y, all);
+    if (pressed == CTL_PART_REWIND || !g->ctl_ok[rew])
+        return;
+    blit_clipped(g->screen, &g->ctl_img[rew], x + CTL_REWIND_X, y + CTL_REWIND_Y, all);
+    if (total > 0 && g->ctl_ok[CTL_BAR]) {
+        const Dib *b = &g->ctl_img[CTL_BAR];
+        Rect clip = {x + CTL_BAR_X, y + CTL_BAR_Y, b->width * pos / total, b->height};
+        if (clip.w > 0)
+            blit_clipped(g->screen, b, clip.x, clip.y, clip);
+    }
+}
+
+static void draw_controls(Game *g, int obj, const DkObject *o, int ox, int oy)
+{
+    for (int k = 0; k < o->nchild; k++)
+        if (o->children[k].cls == 2)
+            draw_control(g, obj, k, ox, oy);
+}
+
+/* A pop-up's title strip, painted by TWTW.EXE in the window's own client area (the window is a
+ * plain WS_POPUP): FUN_1028_d588 draws a Rectangle with the black pen and a brush of
+ * GetSysColor(COLOR_ACTIVECAPTION) for the active (top) pop-up or COLOR_INACTIVECAPTION for the
+ * others, from x = 11 to the pop-up's width and over rows 0-8; FUN_1028_df40 then draws the
+ * system-menu box over x 0-12: COLOR_WINDOWFRAME lines, a silver (C0C0C0) face and the bar
+ * (black outline, white inside, 808080 shadow one pixel down-right). Windows 3.1's default
+ * colours: active caption navy, inactive caption white, window frame black. Row 8 is drawn
+ * over the bitmap's first row. */
+static void draw_strip(Screen *s, Rect r, int active)
+{
+    fill(s, r.x + 11, r.y, r.w - 11, STRIP_H + 1, SYS_BLACK);               /* Rectangle: pen ... */
+    fill(s, r.x + 12, r.y + 1, r.w - 13, STRIP_H - 1, active ? SYS_NAVY : SYS_WHITE);   /* ... brush */
+    fill(s, r.x, r.y, 12, 1, SYS_BLACK);                                    /* box frame: top */
+    fill(s, r.x, r.y, 1, STRIP_H + 1, SYS_BLACK);                           /* left */
+    fill(s, r.x + 12, r.y + 1, 1, STRIP_H - 1, SYS_BLACK);                  /* right */
+    fill(s, r.x + 1, r.y + STRIP_H, 11, 1, SYS_BLACK);                      /* bottom */
+    fill(s, r.x + 1, r.y + 1, 11, STRIP_H - 1, SYS_SILVER);                 /* face */
+    fill(s, r.x + 4, r.y + 4, 7, 3, SYS_GREY);                              /* bar shadow */
+    fill(s, r.x + 3, r.y + 3, 7, 3, SYS_BLACK);                             /* bar outline */
+    fill(s, r.x + 4, r.y + 4, 5, 1, SYS_WHITE);                             /* bar */
 }
 
 static Rect popup_rect(Game *g, const DkObject *o)
@@ -586,6 +673,15 @@ static void compose(Game *g)
     const Dib *pd = page ? object_bitmap(g, page) : NULL;
     if (pd)
         blit_clipped(s, pd, g->page_rect.x, g->page_rect.y, g->fullscreen ? all : g->page_rect);
+    if (page && page->ntable && g->dial_sel >= 0 && g->dial_sel < page->ntable) {
+        /* the dial with its needle on the selected letter (FUN_1048_dfc2): the letter's
+         * animation name with .DIB, at (161, 101); letter A's picture is the page's own */
+        char path[256];
+        resolve(g, page->dir, page->table_anims[g->dial_sel], ".DIB", path, sizeof path);
+        const Dib *d = bitmap(g, path);
+        if (d)
+            blit_clipped(s, d, g->page_rect.x + DIAL_PLATE_X, g->page_rect.y + DIAL_PLATE_Y, g->page_rect);
+    }
     if (!g->fullscreen)
         for (int k = 0; k < g->nframes; k++) {
             DkObject *f = object(g, g->frame_obj[k]);
@@ -593,6 +689,10 @@ static void compose(Game *g)
             if (d)
                 blit_clipped(s, d, g->frame_rect[k].x, g->frame_rect[k].y, g->frame_rect[k]);
         }
+    if (g->media.kind == 1 && (g->media.owner == g->page || g->media.owner == OWNER_NAV))
+        ani_player_redraw(&g->media.ani, s);                 /* a repaint keeps the animation */
+    if (page)
+        draw_controls(g, g->page, page, g->page_rect.x, g->page_rect.y);
     if (page && page->ntable)
         draw_dial_lamp(g);
     if (page && page->ntable && g->dial_pressed && g->have_ok_pressed)
@@ -609,15 +709,14 @@ static void compose(Game *g)
                 if ((x >= r.x + r.w || y >= r.y + r.h) && !((x + y) & 1) && x >= 0 && x < SCREEN_W && y >= 0 &&
                     y < SCREEN_H)
                     s->pixels[y * SCREEN_W + x] = SYS_BLACK;   /* every other pixel; the rest shows through */
-        fill(s, r.x, r.y, r.w, 1, SYS_BLACK);                     /* title strip: border line ... */
-        fill(s, r.x, r.y + 1, r.w, STRIP_H - 1, SYS_NAVY);        /* ... caption ... */
-        fill(s, r.x, r.y + 1, STRIP_H - 1, STRIP_H - 1, SYS_SILVER); /* ... system-menu box */
-        fill(s, r.x + 1, r.y + 4, STRIP_H - 3, 1, SYS_BLACK);
         const Dib *d = object_bitmap(g, o);
         if (d)
             blit_clipped(s, d, r.x, r.y + STRIP_H, all);
-        fill(s, r.x, r.y + STRIP_H, r.w, 1, SYS_BLACK);       /* line under the strip (over the first row) */
+        draw_strip(s, r, p == g->npopups - 1);
+        if (g->media.kind == 1 && g->media.owner == g->popups[p])
+            ani_player_redraw(&g->media.ani, s);             /* the animation playing in it */
         draw_buttons(g, g->popups[p], o, r.x, r.y + STRIP_H);
+        draw_controls(g, g->popups[p], o, r.x, r.y + STRIP_H);
         if (p == g->npopups - 1) {
             widgets_setup(g);
             draw_widgets(g, o, r.x, r.y + STRIP_H);
@@ -630,12 +729,19 @@ static void compose(Game *g)
 
 /* ------------------------------------------------------------------ media */
 
+/* Stopping (or finishing) an animation resets it: its window is repainted without it (verified:
+ * WIATR's page gets its labels back at the end; a control's rewind or a click that stops it
+ * restores the page). */
 static void media_stop(Game *g)
 {
     if (g->media.kind)
         SDL_LogDebug(SDL_LOG_CATEGORY_APPLICATION, "media stop");
-    if (g->media.kind == 1)
+    if (g->media.kind == 1) {
         ani_player_stop(&g->media.ani);
+        g->dirty = 1;
+    }
+    g->media.ctl_obj = g->media.ctl_k = -1;
+    g->media.held = 0;
     if (g->media.wav) {
         SDL_DestroyAudioStream(g->media.wav);
         g->media.wav = NULL;
@@ -644,9 +750,10 @@ static void media_stop(Game *g)
     g->media.end = END_NONE;
 }
 
-static int media_ani(Game *g, const char *path, int ox, int oy)
+static int media_ani(Game *g, const char *path, int owner, int ox, int oy)
 {
     media_stop(g);
+    g->media.owner = owner;
     size_t size;
     uint8_t *buf = vfs_read(g->vfs, path, &size);
     char err[128] = "not found";
@@ -694,6 +801,20 @@ static void options_function(Game *g, int n);
 static void idx_ok(Game *g);
 enum { OPEN_NEW, OPEN_IN_PLACE };
 static void open_object(Game *g, uint32_t target, int mode);
+static void ctl_action(Game *g, int obj, int k, int part);
+
+/* A control whose first option word is set plays when its object opens (FUN_1018_71ac; no
+ * control in this data has it). */
+static void ctl_autoplay(Game *g, int obj)
+{
+    DkObject *o = object(g, obj);
+    for (int k = 0; o && k < o->nchild; k++)
+        if (o->children[k].cls == 2 && o->children[k].anim_params[0]) {
+            media_stop(g);
+            ctl_action(g, obj, k, 1 /* CTL_PART_PLAY */);
+            return;
+        }
+}
 
 static void set_page_layout(Game *g, const DkObject *o)
 {
@@ -722,13 +843,14 @@ static void enter_page(Game *g, int target)
     g->dirty = 1;
     compose(g);
     run_events(g, target, o->events, o->nevents, 1);        /* event 1: on open */
+    ctl_autoplay(g, target);
     /* auto-play animation (class 7, shape 36): plays now, event 6 when it ends */
     for (int k = 0; k < o->nchild; k++) {
         const DkChild *c = &o->children[k];
         if (c->cls == 7 && c->shape == 36 && c->file) {
             char path[256];
             resolve(g, o->dir, c->file, ".ANI", path, sizeof path);
-            if (media_ani(g, path, g->page_rect.x, g->page_rect.y) == 0) {
+            if (media_ani(g, path, target, g->page_rect.x, g->page_rect.y) == 0) {
                 g->media.end = END_EVENT6;
                 g->media.end_obj = target;
                 g->media.end_child = k;
@@ -809,6 +931,7 @@ static void open_object(Game *g, uint32_t target, int mode)
     g->dirty = 1;
     compose(g);
     run_events(g, (int)target, o->events, o->nevents, 1);
+    ctl_autoplay(g, (int)target);
 }
 
 static void close_object(Game *g, int target)
@@ -833,11 +956,70 @@ static void play_anim_child(Game *g, int obj, int k)
     resolve(g, o->dir, o->children[k].file, ".ANI", path, sizeof path);
     int ox, oy;
     origin(g, obj, &ox, &oy);
-    if (media_ani(g, path, ox, oy) == 0) {
+    if (media_ani(g, path, obj, ox, oy) == 0) {
         g->media.end = END_EVENT6;
         g->media.end_obj = obj;
         g->media.end_child = k;
     }
+}
+
+/* Class-2 control buttons (mouse up: FUN_1018_7454).
+ * Play: pauses while playing, resumes when paused, does nothing at the end (rewind first); else
+ * it starts the animation from the beginning, unless some other medium was playing: then that is
+ * only stopped (FUN_1010_bd50). Rewind: stops and goes back to the start (the page is restored).
+ * Action 2 (SENDMESSAGE id, 107) makes the control act as if Play was clicked (FUN_1048_d95a). */
+static void ctl_action(Game *g, int obj, int k, int part)
+{
+    DkObject *o = object(g, obj);
+    if (!o || k < 0 || k >= o->nchild || o->children[k].cls != 2)
+        return;
+    Media *m = &g->media;
+    int active = m->kind == 1 && m->ctl_obj == obj && m->ctl_k == k;
+    if (part == CTL_PART_REWIND) {
+        if (active)
+            media_stop(g);
+    } else if (active) {
+        if (!m->held)
+            ani_player_pause(&m->ani, !m->ani.paused_ns);
+    } else if (m->kind) {
+        media_stop(g);
+    } else {
+        char path[256];
+        int ox, oy;
+        resolve(g, o->dir, o->children[k].file, ".ANI", path, sizeof path);
+        origin(g, obj, &ox, &oy);
+        if (media_ani(g, path, obj, ox, oy) == 0) {
+            m->ctl_obj = obj;
+            m->ctl_k = k;
+        }
+    }
+    g->dirty = 1;
+}
+
+/* The control part of window obj at (x, y): CTL_PART_* (NONE inside the panel), -1 if no control. */
+static int ctl_hit(Game *g, int obj, int x, int y, int *kk)
+{
+    DkObject *o = object(g, obj);
+    if (!o)
+        return -1;
+    int ox, oy;
+    origin(g, obj, &ox, &oy);
+    for (int k = 0; k < o->nchild; k++) {
+        const DkChild *c = &o->children[k];
+        if (c->cls != 2 || !hit(c->anim_rect, x - ox, y - oy))
+            continue;
+        *kk = k;
+        int px = x - ox - c->anim_rect[0], py = y - oy - c->anim_rect[1];
+        const Dib *pl = &g->ctl_img[CTL_PLAY], *rw = &g->ctl_img[CTL_REWIND];
+        if (g->ctl_ok[CTL_PLAY] && px >= CTL_PLAY_X && px < CTL_PLAY_X + pl->width && py >= CTL_PLAY_Y &&
+            py < CTL_PLAY_Y + pl->height)
+            return CTL_PART_PLAY;
+        if (g->ctl_ok[CTL_REWIND] && px >= CTL_REWIND_X && px < CTL_REWIND_X + rw->width && py >= CTL_REWIND_Y &&
+            py < CTL_REWIND_Y + rw->height)
+            return CTL_PART_REWIND;
+        return CTL_PART_NONE;
+    }
+    return -1;
 }
 
 static uint32_t arg32(const DkAction *a) { return ((uint32_t)a->args[0] << 16) | a->args[1]; }
@@ -852,10 +1034,10 @@ static void run_action(Game *g, int obj, const DkAction *a)
     switch (a->type) {
     case 1: open_object(g, arg32(a), OPEN_NEW); break;              /* OPENPAGE: a new window */
     case 3: open_object(g, arg32(a), OPEN_IN_PLACE); break;         /* CHANGEPAGE: page, or pop-up in place */
-    case 2:                                                         /* (re)start animation element */
+    case 2:                                                         /* message to a control: Play */
         for (int k = 0; k < o->nchild; k++)
             if (o->children[k].cls == 2 && o->children[k].id == a->args[0]) {
-                play_anim_child(g, obj, k);
+                ctl_action(g, obj, k, CTL_PART_PLAY);
                 break;
             }
         break;
@@ -866,7 +1048,7 @@ static void run_action(Game *g, int obj, const DkAction *a)
     case 7:                                                         /* play animation in place */
         resolve(g, o->dir, a->args[0], ".ANI", path, sizeof path);
         origin(g, obj, &ox, &oy);
-        media_ani(g, path, ox, oy);
+        media_ani(g, path, obj, ox, oy);
         break;
     case 13: close_object(g, (int)arg32(a)); break;                 /* close that object */
     case 12: options_function(g, a->args[0]); break;                /* Options: copy / print / print setup */
@@ -924,6 +1106,22 @@ static int nav_slot_of(Game *g, int b)
 
 static void media_finished(Game *g)
 {
+    if (g->media.ctl_obj >= 0) {
+        /* the control's end (1018:7c3x): stop, and rewind if its record says so (the second
+         * option word: 1 on most pages, 0 on the principle film pages, which keep the last frame) */
+        DkObject *o = object(g, g->media.ctl_obj);
+        if (o && g->media.ctl_k < o->nchild && !o->children[g->media.ctl_k].anim_params[1]) {
+            if (g->media.ani.stream) {
+                SDL_DestroyAudioStream(g->media.ani.stream);
+                g->media.ani.stream = NULL;
+            }
+            g->media.held = 1;
+            g->dirty = 1;
+        } else {
+            media_stop(g);
+        }
+        return;
+    }
     int end = g->media.end, obj = g->media.end_obj, child = g->media.end_child, fn = g->media.end_nav;
     media_stop(g);
     if (end == END_NAV) {
@@ -1245,7 +1443,7 @@ static void click_dial(Game *g, int obj, const DkObject *o, int value)
         uint32_t target = o->table_targets[g->dial_sel];
         char path[256];
         resolve(g, o->dir, o->table_anims[g->dial_sel], ".ANI", path, sizeof path);
-        if (media_ani(g, path, g->page_rect.x, g->page_rect.y) == 0) {
+        if (media_ani(g, path, g->page, g->page_rect.x, g->page_rect.y) == 0) {
             g->media.end = END_OPEN;
             g->media.end_target = target;
         } else {
@@ -1276,7 +1474,7 @@ static void click_child(Game *g, int obj, int k)
         idx_ok(g);
         return;
     }
-    if (c->cls == 7 || (c->cls == 2 && !c->nevents)) {     /* animated hotspot: play, event 6 at the end */
+    if (c->cls == 7) {                                     /* animated hotspot: play, event 6 at the end */
         play_anim_child(g, obj, k);
         return;
     }
@@ -1334,7 +1532,26 @@ void game_click(Game *g, int x, int y)
 {
     g->mouse_x = x;
     g->mouse_y = y;
-    if (g->media.kind) {
+    {
+        /* a class-2 control takes its own clicks (it doesn't stop media: verified, a click on
+         * Pause while playing pauses) */
+        int k, win = g->npopups ? g->popups[g->npopups - 1] : g->page, part = -1;
+        DkObject *wo = object(g, win);
+        if (wo && (g->npopups ? in_rect(popup_rect(g, wo), x, y) : in_rect(g->page_rect, x, y)))
+            part = ctl_hit(g, win, x, y, &k);
+        if (part >= 0) {
+            if (part != CTL_PART_NONE) {
+                g->ctl_obj = win;
+                g->ctl_k = k;
+                g->ctl_part = part;
+                g->dirty = 1;
+            }
+            return;
+        }
+    }
+    /* A paused or finished control animation isn't playing: clicks go to the hotspots (a picture
+     * hotspot sending Play then resumes it). */
+    if (g->media.kind && !(g->media.kind == 1 && (g->media.held || g->media.ani.paused_ns))) {
         /* TWTW.EXE (FUN_1010_6f0a / FUN_1010_6420): every hotspot of the clicked window gets the
          * click; one with flag 4 stops all media. If media was stopped, the hotspot under the
          * pointer still acts only with flag 1. Stopping never fires event 6: auto-play pages
@@ -1382,7 +1599,7 @@ deliver:
                 k = i;
         char path[256];
         resolve(g, 0, nav->children[k].file, ".ANI", path, sizeof path);
-        if (media_ani(g, path, g->nav_panel.x, g->nav_panel.y) == 0) {   /* grow animation, then go */
+        if (media_ani(g, path, OWNER_NAV, g->nav_panel.x, g->nav_panel.y) == 0) {   /* grow, then go */
             g->media.end = END_NAV;
             g->media.end_nav = nav_slot_of(g, b);
         } else {
@@ -1399,6 +1616,14 @@ deliver:
 
 void game_mouse_up(Game *g)
 {
+    if (g->ctl_obj >= 0) {                      /* control button: acts if released on it */
+        int obj = g->ctl_obj, k = g->ctl_k, part = g->ctl_part, kk = -1;
+        g->ctl_obj = g->ctl_k = -1;
+        g->ctl_part = CTL_PART_NONE;
+        g->dirty = 1;
+        if (ctl_hit(g, obj, g->mouse_x, g->mouse_y, &kk) == part && kk == k)
+            ctl_action(g, obj, k, part);
+    }
     if (g->btn_obj >= 0) {                      /* FUN_1010_210c: click only if released on the button */
         int obj = g->btn_obj, k = g->btn_k, in = g->btn_in;
         g->btn_obj = -1;
@@ -1580,9 +1805,17 @@ void game_update(Game *g)
     }
     if (g->dirty)
         compose(g);
-    if (g->media.kind == 1) {
+    if (g->media.kind == 1 && !g->media.held) {
+        int before = ani_player_position(&g->media.ani);
         if (!ani_player_update(&g->media.ani, g->screen))
             media_finished(g);
+        else if (g->media.ctl_obj >= 0 && ani_player_position(&g->media.ani) != before) {
+            int ox, oy;                        /* the panel is a window over the animation */
+            origin(g, g->media.ctl_obj, &ox, &oy);
+            draw_control(g, g->media.ctl_obj, g->media.ctl_k, ox, oy);
+        }
+        if (g->dirty)
+            compose(g);
     } else if (g->media.kind == 2) {
         if (SDL_GetAudioStreamQueued(g->media.wav) <= 0)
             media_finished(g);
@@ -1662,6 +1895,8 @@ Game *game_create(Vfs *vfs, Screen *screen, SDL_AudioDeviceID audio, char *err, 
         screen_set_palette(screen, t->palette, t->colours);
     install_system_colours(screen);
     g->widget_obj = -1;
+    g->ctl_obj = g->ctl_k = -1;
+    g->media.ctl_obj = g->media.ctl_k = -1;
     g->idx_edit = g->idx_list = g->idx_sb = -1;
     /* Index text: the original's style 0x0BE3 colours (white, black, yellow, black) */
     g->col_bg = nearest_index(screen, 255, 255, 255);
@@ -1703,6 +1938,16 @@ Game *game_create(Vfs *vfs, Screen *screen, SDL_AudioDeviceID audio, char *err, 
             g->have_ok_pressed = 1;
         }
         free(bmp);
+        /* The class-2 control's pictures. Their pixel values are game palette indices (the
+         * screen palette is the identity): the other EXE bitmaps carry the game palette, but
+         * 118 (the progress bar) has a stale one, and the original shows its index 11 as the
+         * palette's (24, 57, 115). So these are used unmapped. */
+        for (int i = 0; i < 6; i++) {
+            bmp = ne_bitmap_bmp(&g->ne, ctl_bitmap_id[i], NULL, &bl);
+            if (bmp && dib_decode(bmp, bl, &g->ctl_img[i], derr, sizeof derr) == 0)
+                g->ctl_ok[i] = 1;
+            free(bmp);
+        }
         static const int ids[3] = {157, 157, 107};        /* Normal, Arrow, Hand */
         for (int i = 0; i < 3; i++) {
             NeCursor c;
@@ -1852,6 +2097,9 @@ void game_destroy(Game *g)
         dib_free(&g->exe_ok_dark);
     if (g->have_ok_pressed)
         dib_free(&g->exe_ok_pressed);
+    for (int i = 0; i < 6; i++)
+        if (g->ctl_ok[i])
+            dib_free(&g->ctl_img[i]);
     font_close(g->font);
     for (int i = 0; i < g->nexe_bmp; i++)
         if (g->exe_bmp[i].ok)
