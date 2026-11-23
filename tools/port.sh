@@ -3,20 +3,21 @@
 # Drive the port headless on Xvfb :78 (X11 video, dummy audio) for tests.
 #
 #   tools/port.sh start [twtw args]    e.g. tools/port.sh start --page 104
-#   tools/port.sh click X Y            left click at 640x480 logical coordinates
+#   tools/port.sh click X Y            left click at logical (game) coordinates
 #   tools/port.sh move X Y
 #   tools/port.sh key KEYSYM
-#   tools/port.sh shot FILE.png        screenshot, scaled back to logical 640x480
+#   tools/port.sh shot FILE.png        screenshot, scaled back to the logical 638x459
 #   tools/port.sh stop
 #
 # The debug log (pages, pop-ups, media) goes to work/port.log.
-# The window is 1280x960, centred on the 1600x1200 screen at (160, 120).
+# The window is 1276x918 (2x the 638x459 working area); its position is read from X.
 export DISPLAY=:78 SDL_VIDEO_DRIVER=x11 SDL_AUDIO_DRIVER=dummy
 export XDG_DATA_HOME="$(cd "$(dirname "$0")/.." && pwd)/work/xdg"   # keep test settings out of the user profile
 unset WAYLAND_DISPLAY
 R=$(cd "$(dirname "$0")/.." && pwd)
 T=${TMPDIR:-/tmp}
 win() { xdotool search --name "Jak to dzia" | head -1; }
+origin() { eval "$(xdotool getwindowgeometry --shell "$(win)")"; OX=$X; OY=$Y; }
 case "$1" in
 start)
     shift
@@ -26,14 +27,15 @@ start)
     sleep 0.5
     xdotool windowfocus "$(win)"
     ;;
-click) xdotool mousemove $((160 + 2 * $2 + 1)) $((120 + 2 * $3 + 1)) click 1 ;;
-move) xdotool mousemove $((160 + 2 * $2 + 1)) $((120 + 2 * $3 + 1)) ;;
+click) origin; xdotool mousemove $((OX + 2 * $2 + 1)) $((OY + 2 * $3 + 1)) click 1 ;;
+move) origin; xdotool mousemove $((OX + 2 * $2 + 1)) $((OY + 2 * $3 + 1)) ;;
 key) xdotool key "$2" ;;
 shot)
-    import -window root -crop 1280x960+160+120 +repage "$T/twtw-port-full.png"
+    origin
+    import -window root -crop "1276x918+$OX+$OY" +repage "$T/twtw-port-full.png"
     python3 -I -c "
 from PIL import Image
-Image.open('$T/twtw-port-full.png').convert('RGB').resize((640, 480), Image.NEAREST).save('$2')"
+Image.open('$T/twtw-port-full.png').convert('RGB').resize((638, 459), Image.NEAREST).save('$2')"
     ;;
 stop) pkill -x twtw; sleep 0.5 ;;
 *) sed -n '2,13p' "$0"; exit 2 ;;

@@ -71,5 +71,10 @@ void screen_present(Screen *s, SDL_Renderer *r)
         }
         s->dirty = 0;
     }
-    SDL_RenderTexture(r, s->texture, NULL, NULL);
+    int w = SCREEN_W, h = SCREEN_H;
+    SDL_RendererLogicalPresentation mode;
+    if (SDL_GetRenderLogicalPresentation(r, &w, &h, &mode) && (w <= 0 || h <= 0 || w > SCREEN_W || h > SCREEN_H))
+        w = SCREEN_W, h = SCREEN_H;
+    SDL_FRect src = {0, 0, (float)w, (float)h};
+    SDL_RenderTexture(r, s->texture, &src, NULL);
 }

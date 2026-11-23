@@ -1015,7 +1015,7 @@ static void idx_ok(Game *g)
 
 static SDL_Surface *screen_surface(Game *g)
 {
-    SDL_Surface *s = SDL_CreateSurface(SCREEN_W, SCREEN_H, SDL_PIXELFORMAT_INDEX8);
+    SDL_Surface *s = SDL_CreateSurface(VIEW_W, VIEW_H, SDL_PIXELFORMAT_INDEX8);   /* the working area */
     if (!s)
         return NULL;
     SDL_Palette *pal = SDL_CreateSurfacePalette(s);
@@ -1024,8 +1024,8 @@ static SDL_Surface *screen_surface(Game *g)
         c[i] = (SDL_Color){g->screen->palette[i].r, g->screen->palette[i].g, g->screen->palette[i].b, 255};
     if (pal)
         SDL_SetPaletteColors(pal, c, 0, 256);
-    for (int y = 0; y < SCREEN_H; y++)
-        memcpy((uint8_t *)s->pixels + (size_t)y * s->pitch, g->screen->pixels + (size_t)y * SCREEN_W, SCREEN_W);
+    for (int y = 0; y < VIEW_H; y++)
+        memcpy((uint8_t *)s->pixels + (size_t)y * s->pitch, g->screen->pixels + (size_t)y * SCREEN_W, VIEW_W);
     return s;
 }
 

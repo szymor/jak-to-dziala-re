@@ -50,7 +50,7 @@ static void show_error(const char *title, const char *msg)
 
 static void apply_display(App *app)
 {
-    SDL_SetRenderLogicalPresentation(app->renderer, SCREEN_W, SCREEN_H,
+    SDL_SetRenderLogicalPresentation(app->renderer, VIEW_W, VIEW_H,
                                      app->settings.integer_scale ? SDL_LOGICAL_PRESENTATION_INTEGER_SCALE
                                                                  : SDL_LOGICAL_PRESENTATION_LETTERBOX);
     SDL_SetWindowFullscreen(app->window, app->settings.fullscreen);
@@ -130,7 +130,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
     if (integer >= 0)
         app->settings.integer_scale = integer;
 
-    if (!SDL_CreateWindowAndRenderer("Jak to działa?", SCREEN_W * 2, SCREEN_H * 2, SDL_WINDOW_RESIZABLE,
+    if (!SDL_CreateWindowAndRenderer("Jak to działa?", VIEW_W * 2, VIEW_H * 2, SDL_WINDOW_RESIZABLE,
                                      &app->window, &app->renderer)) {
         show_error("SDL_CreateWindowAndRenderer", SDL_GetError());
         return SDL_APP_FAILURE;

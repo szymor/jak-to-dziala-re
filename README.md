@@ -116,7 +116,7 @@ captures the port and compares; the exit status is non-zero if any screen differ
 |---|---|
 | `src/vfs/` | read-only file system over the ISO (own ISO 9660 reader) or a directory |
 | `src/formats/` | file format readers: DIB (RLE8, 1/4/8-bit), ANI, TWTW.PNG (DKMM), NE resources of TWTW.EXE |
-| `src/platform/` | the 640×480 indexed screen and its SDL texture |
+| `src/platform/` | the 640×480 indexed screen buffer (shown: the original's 638×459 working area), its SDL texture, the settings file |
 | `src/engine/` | the game engine (`game.c`: pages, pop-ups, actions, media, nav) and the ANI player |
 | `src/main.c`, `src/viewer.c` | the SDL3 application: game mode and viewer mode |
 | `src/tool.c` | `twtw-tool`, headless checks and dumps |

@@ -30,7 +30,7 @@ Status (2026-11-19): phases 1–4 are done; port milestones 1–4 are done (see 
 ```
 src/
   main.c            SDL3 app callbacks (SDL_AppInit/Iterate/Event/Quit)
-  platform/         window + renderer (640x480 logical, scaled), audio device, clock
+  platform/         window + renderer (638x459 logical = the original's client area, scaled), audio device, clock
   vfs/              read the user's ISO directly (small ISO 9660 reader) or an extracted
                     directory; case-insensitive lookup
   formats/          dib.c (RLE8), ani.c, dkmm.c (TWTW.PNG), ne_res.c (bitmaps/cursor from TWTW.EXE)
@@ -44,7 +44,7 @@ src/
 
 Decisions, updated with what the analysis showed:
 
-- **Screen:** a 640×480 logical surface. Page area at (94, 4), nav template at (0, 0), frame strips as decoded. Scale to the window with `SDL_SetRenderLogicalPresentation`.
+- **Screen:** a 640×480 indexed buffer, of which the original's working area, 638×459, is shown (its main window is 640×480 with a Windows 3.1 caption and thin border; FUN_1010_24f0). Page area at (94, 4), nav template at (0, 0), frame strips as decoded. Scale to the window with `SDL_SetRenderLogicalPresentation`.
 - **Pixels:** keep an 8-bit indexed framebuffer with the single global palette, converted to an RGBA texture on change. It's faithful and simple, and needs no palette animation (the palette fades are unused).
 - **Pop-ups:** a stack of panels. Each pop-up has an 8-px title strip above its bitmap (the original used tiny child windows). Action 1 stacks a new pop-up, action 3 changes the page in place (the base window, or the pop-up of the same template), a click outside the top pop-up closes pop-ups down the stack until it lands in one, and action 13 closes one.
 - **Transitions:** none (the original shows none). Optional later; the 19 effects are documented.
