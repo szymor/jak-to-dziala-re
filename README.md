@@ -44,7 +44,15 @@ installs `twtw`, `twtw-tool`, the README, the license and (on Linux) a desktop e
 cd build && cpack
 ```
 
-makes `.tar.gz` / `.zip` archives of the same files (they need SDL3 and SDL3_ttf on the system). No game data is ever installed or packaged.
+makes an archive of the same files (`.tar.gz` on Linux, `.zip` on Windows). Built this way they need SDL3 and SDL3_ttf on the system; configure with `-DTWTW_VENDOR_SDL=ON` to build SDL3 3.4.20 and SDL3_ttf 3.2.2 from source and link them in statically, as the release packages do. Windows packages are cross-compiled with MinGW-w64:
+
+```bash
+cmake -S . -B build-win -G Ninja -DCMAKE_BUILD_TYPE=Release -DTWTW_VENDOR_SDL=ON -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-x86_64.cmake
+```
+
+No game data is ever installed or packaged.
+
+GitHub Actions (`.github/workflows/build.yml`) builds the Linux and Windows packages for every push and pull request. Each push to `master` replaces the release tagged `latest` with that commit's packages.
 
 ## Checks
 

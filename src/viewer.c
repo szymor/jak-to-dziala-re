@@ -85,8 +85,8 @@ static void base_bitmap_for(const char *ani, char *out, size_t outlen)
 static void set_title(App *app, const char *extra)
 {
     char t[320];
-    SDL_snprintf(t, sizeof t, "Jak to działa? - %s [%zu/%zu]%s", app->names[app->current], app->current + 1,
-                 app->count, extra);
+    SDL_snprintf(t, sizeof t, "Jak to działa? - %s [%u/%u]%s", app->names[app->current],
+                 (unsigned)(app->current + 1), (unsigned)app->count, extra);
     if (strcmp(t, app->title) != 0) {
         SDL_strlcpy(app->title, t, sizeof app->title);
         SDL_SetWindowTitle(app->window, t);

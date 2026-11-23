@@ -19,6 +19,7 @@
 #include "vfs/vfs.h"
 
 #include <SDL3/SDL.h>
+#include <SDL3/SDL_main.h>   /* on Windows: UTF-8 argv (the CD image name has Polish letters) */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

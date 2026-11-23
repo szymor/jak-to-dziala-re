@@ -1,0 +1,99 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Builds the Linux and Windows packages on every push and pull request. A push to master also
+# replaces the rolling "latest" release with that commit's packages.
+# No game data is involved: the packages hold only the player, the tool and the documents.
+name: build
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  package:
+    name: ${{ matrix.name }}
+    # The oldest supported runner, so the Linux build runs on older glibc versions too.
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            cmake_args: ""
+            package: twtw-*-linux-x86_64.tar.gz
+          - name: windows-x86_64
+            cmake_args: -DCMAKE_TOOLCHAIN_FILE=cmake/mingw-w64-x86_64.cmake
+            package: twtw-*-windows-x86_64.zip
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ninja-build
+          if [ "${{ matrix.name }}" = windows-x86_64 ]; then
+            sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64-posix g++-mingw-w64-x86-64-posix
+          else
+            # Headers SDL needs to build its video/audio back ends (it loads the libraries at run time).
+            sudo apt-get install -y --no-install-recommends \
+              libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxfixes-dev libxi-dev libxss-dev \
+              libxkbcommon-dev libwayland-dev wayland-protocols libegl1-mesa-dev libgl1-mesa-dev \
+              libdrm-dev libgbm-dev libasound2-dev libpulse-dev libpipewire-0.3-dev libdbus-1-dev \
+              libudev-dev libibus-1.0-dev libdecor-0-dev
+          fi
+
+      - name: Configure
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DTWTW_VENDOR_SDL=ON ${{ matrix.cmake_args }}
+
+      - name: Build
+        run: cmake --build build
+
+      - name: Package
+        working-directory: build
+        run: cpack
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: build/${{ matrix.package }}
+          if-no-files-found: error
+
+  release:
+    name: latest release
+    needs: package
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: release-latest
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Replace the "latest" release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          short=$(echo "$GITHUB_SHA" | cut -c1-7)
+          # Drop the previous rolling release and its tag, then publish this commit's packages.
+          gh release delete latest --cleanup-tag --yes || true
+          gh release create latest dist/* \
+            --target "$GITHUB_SHA" \
+            --title "Latest build ($short)" \
+            --notes "Automatic build of commit $GITHUB_SHA on master. It is replaced on every push.
+
+          The packages contain the player and \`twtw-tool\` only; you need your own copy of the *Jak to działa?* CD (the ISO image or an extracted copy). See the README for usage." \
+            --latest
