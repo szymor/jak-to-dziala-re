@@ -94,6 +94,22 @@ writes the EXE's 41 UI bitmaps (byte-identical to `tools/ne_resources.py` output
 
 `tools/port.sh` drives the game headless (Xvfb, dummy audio) for screen tests: `start [--page N]`, `click X Y`, `shot FILE.png`, `stop`.
 
+### Regression against the original
+
+`tools/regress.py` plays a fixed list of screens (`python3 -I tools/regress.py list`) in the original program under Wine (`tools/orig.sh`, set up once with `tools/wine-setup.sh`) and in the port, and compares the pictures. It needs the extracted CD in `work/cd` and Xvfb, xdotool, ImageMagick, Wine.
+
+```bash
+python3 -I tools/regress.py capture-orig
+```
+
+captures the references once (a few minutes: every screen starts from a fresh launch and goes through the title).
+
+```bash
+python3 -I tools/regress.py run
+```
+
+captures the port and compares; the exit status is non-zero if any screen differs. Masked out are only the places where Wine itself differs from Windows: pop-up title strips and the white squares Wine paints in pop-up shadows, plus per-screen masks for the blinking A–Z lamp and font-rendered Index text. Results go to `work/regress/` (`report.txt`, and `diff/NAME.png` with differences in magenta, masks in blue). The shots are derived from the game's pictures, so they are never committed.
+
 ## Layout
 
 | Path | Content |
